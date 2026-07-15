@@ -1,30 +1,11 @@
 {
-    config,
-    pkgs,
-    lib,
-    ...
+  pkgs, config, lib
+  ...
 }: {
-    nixpkgs.config.allowUnfree = true;
+  	nixpkgs.config.allowUnfree = true;
+  	nixpkgs.config.cudaSupport = true;
 
-    hardware.graphics = {
-        enable = true;
-        enable32Bit = true;
-    };
-
-    services.xserver.videoDrivers = [ "nvidia" ];
-
-    hardware.nvidia = {
-        package = config.boot.kernelPackages.nvidiaPackages.stable;
-        open = true;
-
-        modesetting.enable = true;
-        nvidiaSettings = true;
-
-        powerManagement.enable = false;
-    };
-
-
-    environment.systemPackages = with pkgs; [
+  	environment.systemPackages = with pkgs; [
         cudaPackages.cudatoolkit
         cudaPackages.cudnn
         cudaPackages.cuda_nvcc

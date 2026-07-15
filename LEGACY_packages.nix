@@ -10,10 +10,7 @@
         (btop.override {cudaSupport = true;})
         yazi
 
-        git git-lfs
-        docker
 
-        openssh tmux
 
         vscode
         python3
