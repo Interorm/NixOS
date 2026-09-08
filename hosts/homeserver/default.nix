@@ -11,6 +11,7 @@
 
         ../../modules/hardware/nvidia.nix
         ../../modules/development/cuda.nix
+        ../../modules/development/remote-desktop.nix
 
         ../../modules/services/llama.cpp/model-gateway.nix
         ../../modules/services/llama.cpp/llama-proxy.nix
