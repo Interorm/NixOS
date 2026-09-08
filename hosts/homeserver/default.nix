@@ -42,8 +42,8 @@
     services.model-gateway = {
         enable = true;
 
-        host = 0.0.0.0;
-        port = 8080;
+        host = "0.0.0.0";
+        port = "8080";
 
         endpoints = {
             # Always-on: the gateway asks them what they serve, every 60 s.
