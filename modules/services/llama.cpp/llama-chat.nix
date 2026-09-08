@@ -22,8 +22,8 @@ in {
     # exact filename from its "Files" tab, and replace both fields.  `target`
     # can stay as-is; that is the whole point of decoupling it.
     services.huggingface-models.models.qwen-chat = {
-        repo = "Qwen/Qwen3-8B-GGUF";
-        file = "Qwen3-8B-Q6_K.gguf";
+        repo = "unsloth/Qwen3.5-9B-GGUF";
+        file = "Qwen3.5-9B-UD-Q6_K_XL.gguf";
         target = "Qwen3.5-9B-Q6.gguf";
     };
 
@@ -60,4 +60,6 @@ in {
             RestartSec = "5";
         };
     };
+
+    networking.firewall.allowedTCPPorts = [ 8070 ];
 }

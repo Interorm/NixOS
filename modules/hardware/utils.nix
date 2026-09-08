@@ -9,5 +9,6 @@
         pciutils
         (btop.override {cudaSupport = true;})
         yazi
+        tmux
     ];
 }

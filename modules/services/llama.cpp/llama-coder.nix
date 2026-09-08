@@ -64,7 +64,7 @@ in {
                 "--model" model
                 "--alias" "Qwen2.5-Coder-7B"
                 "--host" "0.0.0.0"
-                "--port" "8080"
+                "--port" "8060"
                 "--n-gpu-layers" "999"
                 "--parallel" "4"
                 "--ctx-size" "32768"
@@ -77,4 +77,6 @@ in {
             RestartSec = "5";
         };
     };
+
+    networking.firewall.allowedTCPPorts = [ 8060 ];
 }

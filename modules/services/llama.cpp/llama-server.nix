@@ -137,7 +137,7 @@ in {
 
                 "--device-state-slots" "2"
                 "--host-state-slots" "8"
-                "--host-kv-mib" "8192"
+                "--host-kv-mib" "16384"
 
                 # Multi-token prediction: speculative decode using the model's
                 # own MTP head, so no separate draft model to manage.
@@ -190,12 +190,12 @@ in {
     # there; generate with `ssh-keygen -t ed25519` if it has none).  Until this
     # is filled in, the proxy cannot start the engine and every request will
     # 503.
-    # users.users.karl.openssh.authorizedKeys.keys = [
-    #     "ssh-ed25519 AAAA... root@homeserver"
-    # ];
+    users.users.karl.openssh.authorizedKeys.keys = [
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKCkzbQXGin8JbfD5KjJ+fUJGznS5zXnuJPHpDtNWBfE root@homeserver"
+    ];
 
     # TODO: Wake-on-LAN.  Find the interface with `ip link`, then uncomment.
     # Also enable WoL in the UEFI -- the NixOS option only covers the driver
     # side, and the firmware setting is what keeps the NIC powered in S5.
-    # networking.interfaces."enp5s0".wakeOnLan.enable = true;
+    networking.interfaces."enp6s0".wakeOnLan.enable = true;
 }
