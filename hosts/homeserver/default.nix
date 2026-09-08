@@ -14,7 +14,7 @@
 
         ../../modules/services/llama.cpp/llama-proxy.nix
         ../../modules/services/llama.cpp/llama-coder.nix
-        ../../modules/services/llama.cpp/llama-server.nix
+        ../../modules/services/llama.cpp/llama-chat.nix
     ];
 
     # Was `network.hostname` -- no such option path exists.  It is
