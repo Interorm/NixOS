@@ -170,7 +170,11 @@ in {
         paths = lib.mkOption {
             type = lib.types.attrsOf lib.types.str;
             readOnly = true;
-            default = {};
+            # No `default`: a read-only option may only be defined once, in the
+            # `config` section below.  A default would count as a second
+            # definition and fail with "is read-only, but it's set multiple
+            # times".  `config` still assigns it (to {} when no models are
+            # defined), so consumers never see an unset option.
             description = ''
                 Read-only map from model name to its absolute on-disk path.
                 Consume it from service modules:
