@@ -25,7 +25,7 @@
             # "got: sha256-..." from the error.  That trial-and-error loop is
             # the normal Nix workflow, not a mistake.
             rev = "641ef3e7af08fe8f58b769e9f7505f642975a9dc";
-            hash = lib.fakeHash;
+            hash = "sha256-RsGsaB93lezcebwYQT6cq4iL7PteRuY2/40OJ98H1CU=";
         };
 
         nativeBuildInputs = with pkgs; [
