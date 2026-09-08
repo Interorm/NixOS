@@ -1,4 +1,7 @@
-{...}: {
+{
+    pkgs, lib,
+    ...
+}: {
 
     imports = [
         ./hardware-configuration.nix
@@ -10,10 +13,13 @@
         ../../modules/development/cuda.nix
 
         ../../modules/development/vscode.nix
-        ../../modules/python-envs/env_ML.nix
 
         ../../modules/apps/default.nix
     ];
 
-    network.hostname = "Karls-PC";
+    network.hostName = "Karls-PC";
+
+    environment.systemPackages = with pkgs; [
+        (import ../../modules/python-envs/env_ML.nix { inherit pkgs; }).base
+    ];
 }

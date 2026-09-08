@@ -1,4 +1,5 @@
 {
+    pkgs, 
     ...
 }: {
     networking = {
@@ -16,7 +17,7 @@
 
     environment.systemPackages = with pkgs; [
         iputils
-        openshh tmux
+        openssh tmux
     ];
 
     services.openssh.enable = true;

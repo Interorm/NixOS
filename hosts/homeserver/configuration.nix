@@ -62,29 +62,6 @@ in {
 
 
   
-  
-  systemd.services.llama-proxy = {
-    description = "Llama Inference Proxy Service";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network.target" ];
-    restartTriggers = [ config.environment.etc."llama-proxy/main.py".source ];
-
-    path = [ pkgs.iputils pkgs.wakeonlan pkgs.openssh ];
-      
-    serviceConfig = {
-      Type = "simple";
-      ExecStart = "${llamaProxyEnv}/bin/python /etc/llama-proxy/main.py";
-      Restart = "always";
-      RestartSec = "5";
-	
-      User = "homeserver"; 
-      Group = "homeserver";
-		
-      StandardOutput = "append:/home/homeserver/AI/llama-proxy/llama-proxy-logs.log";
-      StandardError = "append:/home/homeserver/AI/llama-proxy/llama-proxy-logs.log";
-    };
-  };
-
 
   systemd.services.llama-code = {
     description = "llama.cpp Server for Coding Completion";

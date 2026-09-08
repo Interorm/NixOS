@@ -6,5 +6,5 @@
         ./hardware/default.nix
     ];
 
-    nix.settings.experimentalFeatures = [ "nix-command" "flakes" ];
+    nix.settings.experimental-features = [ "nix-command" "flakes" ];
 } 

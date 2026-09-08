@@ -4,5 +4,5 @@
 }:  {
     nixpkgs.config.allowUnfree = true;
 
-    environment.systemPackages = with pkgs; [ onedrive ]
+    environment.systemPackages = with pkgs; [ discord ];
 }

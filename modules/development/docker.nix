@@ -6,6 +6,6 @@
 
 	environment.systemPackages = with pkgs; [ docker ];
 
-	virtualization.docker.enable = true;
+	virtualisation.docker.enable = true;
 	networking.firewall.trustedInterfaces = ["docker0"];
 }
