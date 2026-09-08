@@ -8,10 +8,7 @@
         ps.httpx
     ]);
 in {
-
-    imports = [ ../../development/cuda.nix ];
-
-    environment.systemPackages = with pkgs; [ 
+    environment.systemPackages = with pkgs; [
         llamaProxyEnv 
         wakeonlan openssh iputils 
     ];
@@ -27,7 +24,11 @@ in {
             
         serviceConfig = {
             Type = "simple";
-            ExecStart = "${llamaProxyEnv}/bin/python ./llama-proxy/main.py";
+            # Absolute path: `environment.etc."llama-proxy/main.py"` materialises
+            # as /etc/llama-proxy/main.py.  The old relative "./llama-proxy/main.py"
+            # was resolved against systemd's working directory (/), so it never
+            # existed.
+            ExecStart = "${llamaProxyEnv}/bin/python /etc/llama-proxy/main.py";
             Restart = "always";
             RestartSec = "5";
         };

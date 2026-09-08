@@ -16,16 +16,13 @@
         CUDA_HOME = "${pkgs.cudaPackages.cudatoolkit}";
     };
 
-    environment.sessionVariables = {
-        LD_LIBRARY_PATH = lib.mkForce (lib.concatStringsSep ":" [
-            "${pkgs.cudaPackages.cudatoolkit}/lib"
-            "${pkgs.cudaPackages.cudnn}/lib"
-            "${pkgs.stdenv.cc.cc.lib}/lib"
-            "${pkgs.zlib}/lib"
-            "/run/opengl-driver/lib"
-            "/run/opengl-driver-32/lib"
-        ]);
-    };
+    # NOTE: a global LD_LIBRARY_PATH used to live here.  It has been removed on
+    # purpose -- see the "corrections" discussion.  On NixOS every binary already
+    # records the exact libraries it needs in its RPATH, so a global
+    # LD_LIBRARY_PATH does nothing for correctly-built programs and actively
+    # breaks the ones that pick up a mismatched glibc/libstdc++ from it.
+    # For foreign (non-Nix) binaries that genuinely need it, use
+    # `programs.nix-ld` or a per-project devShell instead.
 
     nix.settings = {
         substituters = [ "https://cache.nixos-cuda.org" ];
