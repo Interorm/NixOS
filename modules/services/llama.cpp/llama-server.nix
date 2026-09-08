@@ -39,7 +39,7 @@
             # it comes from the running kernel module -- so without this hook
             # every CUDA binary built in the sandbox fails with
             # "libcuda.so.1: cannot open shared object file".
-            cudaPackages.autoAddDriverRunpath
+            autoAddDriverRunpath
         ];
 
         buildInputs = with pkgs; [
@@ -47,7 +47,7 @@
             ffmpeg       # libavformat>=60 libavcodec>=60 libavutil>=58 libswscale>=7
         ] ++ (with cudaPackages; [
             cuda_cudart
-            cuda_cccl
+            cccl
             libcublas
         ]);
 
