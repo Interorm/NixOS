@@ -18,6 +18,11 @@
         ../../modules/development/vscode.nix
 
         ../../modules/apps/default.nix
+        ../../modules/apps/default_gaming.nix
+
+        # NInfer + Qwen3.8-27B.  PC only -- the homeserver's Pascal cards cannot
+        # run it (NInfer builds for sm_120a exclusively).
+        ../../modules/services/llama.cpp/llama-server.nix
     ];
 
     # Was `network.hostName` -- no such option path exists.

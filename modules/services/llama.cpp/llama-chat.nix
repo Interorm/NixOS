@@ -1,5 +1,5 @@
 {
-    pkgs, lib,
+    pkgs, config, lib,
     ...
 }: let
     llamacpp-cuda = (pkgs.llama-cpp.override {
@@ -12,14 +12,22 @@
         ];
     });
 
-    modelDir = "/var/lib/llama/models";
-    model = "${modelDir}/Qwen3.5-9B-Q6.gguf";
+    model = config.services.huggingface-models.paths.qwen-chat;
 in {
-    environment.systemPackages = [ llamacpp-cuda ];
+    imports = [ ../huggingface-models.nix ];
 
-    systemd.tmpfiles.rules = [
-        "d ${modelDir} 0755 root root - -"
-    ];
+    # PLACEHOLDER COORDINATES -- I have not verified that this repo/file pair
+    # exists, and I am not going to guess a repo id into your config and let you
+    # find out at 3 a.m.  Look up the actual repo on huggingface.co, copy the
+    # exact filename from its "Files" tab, and replace both fields.  `target`
+    # can stay as-is; that is the whole point of decoupling it.
+    services.huggingface-models.models.qwen-chat = {
+        repo = "Qwen/Qwen3-8B-GGUF";
+        file = "Qwen3-8B-Q6_K.gguf";
+        target = "Qwen3.5-9B-Q6.gguf";
+    };
+
+    environment.systemPackages = [ llamacpp-cuda ];
 
     # Renamed from `llama-code` to `llama-chat`: this module and llama-coder.nix
     # both defined `systemd.services.llama-code`, so importing both meant one
@@ -27,7 +35,8 @@ in {
     systemd.services.llama-chat = {
         description = "llama.cpp Server for normal Chat model";
         wantedBy = [ "multi-user.target" ];
-        after = [ "network.target" ];
+        after = [ "network.target" "hf-model-qwen-chat.service" ];
+        wants = [ "hf-model-qwen-chat.service" ];
 
         unitConfig.ConditionPathExists = model;
 

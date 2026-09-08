@@ -1,5 +1,5 @@
 {
-    pkgs, lib,
+    pkgs, config, lib,
     ...
 }: let
     llamacpp-cuda = (pkgs.llama-cpp.override {
@@ -12,9 +12,25 @@
         ];
     });
 
-    modelDir = "/var/lib/llama/models";
-    model = "${modelDir}/Qwen2.5-Coder-7B-Q4.gguf";
+    # The constant path, computed by the model module.  This module never spells
+    # out a filename: change the quantisation below and everything downstream
+    # follows automatically.
+    model = config.services.huggingface-models.paths.qwen-coder;
 in {
+    imports = [ ../huggingface-models.nix ];
+
+    # VERIFY the filename against the repo's file list -- Qwen's GGUF repos
+    # sometimes shard large quants into
+    # `...-q4_k_m-00001-of-0000N.gguf`, in which case set `file = null` to pull
+    # the whole repo and point `target` at the directory instead.
+    # A wrong repo/file shows up as a failing `hf-model-qwen-coder.service`
+    # in `systemctl --failed`, not as a build error.
+    services.huggingface-models.models.qwen-coder = {
+        repo = "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF";
+        file = "qwen2.5-coder-7b-instruct-q4_k_m.gguf";
+        target = "Qwen2.5-Coder-7B-Q4.gguf";
+    };
+
     environment.systemPackages = [ llamacpp-cuda ];
 
     # The model blobs are far too large for the Nix store and are .gitignored,
@@ -23,14 +39,19 @@ in {
     # at *evaluation* time against the read-only copy of the flake in
     # /nix/store, where ./models does not exist.  ConditionPathExists is checked
     # by systemd at *start* time against the real filesystem.
-    systemd.tmpfiles.rules = [
-        "d ${modelDir} 0755 root root - -"
-    ];
+    #
+    # (The directory itself is now created by huggingface-models.nix, so the
+    # tmpfiles rule that used to live here is gone.)
 
     systemd.services.llama-code = {
         description = "llama.cpp Server for Coding Completion";
         wantedBy = [ "multi-user.target" ];
-        after = [ "network.target" ];
+
+        # `wants` not `requires`: if the download fails we still want the unit
+        # to be *tried*, at which point ConditionPathExists cleanly skips it.
+        # `requires` would drag llama-code into a failed state instead.
+        after = [ "network.target" "hf-model-qwen-coder.service" ];
+        wants = [ "hf-model-qwen-coder.service" ];
 
         unitConfig.ConditionPathExists = model;
 

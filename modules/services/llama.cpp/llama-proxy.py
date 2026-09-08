@@ -1,367 +1,468 @@
-import asyncio, time, subprocess, httpx, json
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import StreamingResponse
-import uvicorn
+"""
+Wake-on-demand inference proxy.
+
+Runs on the homeserver.  Fronts the NInfer engine on the NixOS PC: wakes the
+machine with WoL, starts `ninfer-serve.service` over SSH, forwards the request,
+and puts everything back to sleep once nobody has asked for a token in a while.
+
+Two facts about NInfer drive the whole design and are worth stating up front,
+because they are what changed when the PC stopped being a Windows llama.cpp box:
+
+  1. There is NO load/unload API.  The engine holds exactly one model, chosen on
+     the command line at startup, for its entire lifetime.  So "unload the model
+     but keep the server up" -- the middle rung of the old three-tier idle
+     ladder -- is not a thing that exists.  The ladder is now two rungs: stop
+     the service (frees the VRAM), then power the machine off.
+
+  2. Control happens through `ninferctl`, a tiny wrapper installed by
+     llama-server.nix and allowed for this user via a single NOPASSWD sudo rule.
+     We invoke it by its /run/current-system/sw/bin path because sudo matches
+     the rule against the string on the command line and does not resolve
+     symlinks -- see the comment on security.sudo.extraRules over there.
+"""
+
+import asyncio, json, shlex, time
+from contextlib import asynccontextmanager
 from typing import Literal
 
-WINDOWS_MAC = 'A0:AD:9F:B1:E5:DB'
-WINDOWS_IP = '192.168.42.42'
-WINDOWS_USER = 'Karl'
-LLAMA_PORT = '8080'
-LLAMA_URL = f'http://{WINDOWS_IP}:{LLAMA_PORT}'
-
-TIMEOUT = 60
-TIMEOUT_COUNTER = 0
-
-BOOT_LOCK: asyncio.Lock = None
+import httpx
+import uvicorn
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 
+# --------------------------------------------------------------------------- #
+#  Configuration
+# --------------------------------------------------------------------------- #
 
-app = FastAPI()
-HTTP_CLIENT: httpx.AsyncClient = None
+PC_MAC = 'A0:AD:9F:B1:E5:DB'
+PC_IP = '192.168.42.42'
+
+# Lowercase: this is the NixOS user declared in hosts/PC/users.nix, not the old
+# Windows "Karl".
+PC_USER = 'karl'
+
+# Must stay byte-identical to the Cmnd_Spec in llama-server.nix.
+PC_CTL = '/run/current-system/sw/bin/ninferctl'
+
+# `touch` this on the PC to make the proxy back off: it stops the engine and
+# refuses requests until the file is gone.  POSIX path now, not
+# C:\Users\Karl\.llama-proxy\.
+DND_FLAG = f'/home/{PC_USER}/.llama-proxy/dnd.flag'
+
+ENGINE_PORT = '8080'
+ENGINE_URL = f'http://{PC_IP}:{ENGINE_PORT}'
+
+# Idle ladder, in seconds.  Expressed as absolute idle time rather than as a
+# tick counter: the old code mixed a 60-second poll counter with a 60-second
+# grace period in the same comparison, printed them as if they shared a unit,
+# and -- because it flipped PC_STATE to 'unknown' at the middle rung while the
+# whole ladder was guarded by `PC_STATE == 'ready'` -- could never reach the
+# poweroff rung at all.
+STOP_ENGINE_AFTER = 10 * 60
+POWEROFF_AFTER = 25 * 60
+
+IDLE_POLL = 60          # how often the idle watchdog wakes up
+AVAILABILITY_POLL = 30  # how often we re-check reachability / DND
+
+# Boot and load budgets, as (attempts, seconds-between-attempts).
+BOOT_POLL = (60, 2)     # 2 min for WoL -> ping answers
+ENGINE_POLL = (150, 2)  # 5 min for ninfer-serve to map ~30 GB into VRAM
+
+# NInfer answers to whatever model id it was started with.  We discover that id
+# from /v1/models rather than hardcoding it, then reject requests that name a
+# different one -- there is no load API, so a mismatch can only ever be a
+# client misconfiguration, and failing loudly beats silently answering with the
+# wrong model.  Flip to False if your client insists on sending e.g. "gpt-4".
+STRICT_MODEL_CHECK = True
+
+
+# --------------------------------------------------------------------------- #
+#  State
+# --------------------------------------------------------------------------- #
+
+HTTP_CLIENT: httpx.AsyncClient | None = None
+BOOT_LOCK: asyncio.Lock | None = None
+
 LAST_REQUEST_TIME = time.time()
 PC_STATE: Literal['unknown', 'ready', 'starting', 'do-not-disturb', 'off'] = 'unknown'
-LOADED_MODEL: str | None = None
 
-async def send_wol(): await asyncio.create_subprocess_exec("wakeonlan", WINDOWS_MAC)
+# The model id the running engine reports; None until we have asked it.
+SERVED_MODEL: str | None = None
+
+# Only power the machine off if *we* were the ones who woke it.  Without this
+# the proxy would happily shut down a PC you booted yourself and are sitting in
+# front of, 25 minutes after the last API call.  Lost on proxy restart, which
+# fails safe (the machine stays up).
+WE_BOOTED_PC = False
 
 
-async def ssh_run(cmd: str) -> str:
+class ModelMismatch(Exception):
+    """Client asked for a model this engine cannot serve.  A 400, not a 503."""
+
+
+# --------------------------------------------------------------------------- #
+#  Remote control primitives
+# --------------------------------------------------------------------------- #
+
+async def send_wol() -> None:
     proc = await asyncio.create_subprocess_exec(
-        'ssh', '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=no',
-        f"{WINDOWS_USER}@{WINDOWS_IP}", cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+        'wakeonlan', PC_MAC,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
     )
-    stdout, _ = await proc.communicate()
-    return stdout.decode().strip()
+    # The original never awaited this, so the magic packet raced with the ping
+    # loop that was supposed to observe its effect.
+    await proc.wait()
 
 
+async def ssh(*argv: str) -> tuple[int, str, str]:
+    """Run a command on the PC.  Returns (returncode, stdout, stderr).
 
-async def start_llama(): 
-    global PC_STATE
-
-    await ssh_run('powershell -c net start LlamaServer')
-    print(f'[STARTING LLAMA] llama.cpp routing server successfully started')
-
-
-async def stop_llama(): 
-    global LOADED_MODEL, PC_STATE
-    
-    await ssh_run('powershell -c net stop LlamaServer')
-
-    PC_STATE = 'unknown'
-    LOADED_MODEL = None
-    print(f'[STOPPING LLAMA] llama.cpp routing server successfully stopped')
-
-
-
-async def load_model(model_id: str) -> bool:
-    global LOADED_MODEL
-    print(f'[MODEL LOADING] Loading model {model_id}')
-
-    try:
-        warmup_prompt = dict(
-            model = model_id,
-            prompt = '',
-            max_tokens = 1,
-            stream = False
-        )
-        result = await HTTP_CLIENT.post(f'{LLAMA_URL}/v1/completions', json=warmup_prompt, timeout=httpx.Timeout(100))
-        if result.status_code == 200:
-            print(f'[MODEL LOADING] Model {model_id} successfully loaded')
-            LOADED_MODEL = model_id
-            return True
-        else:
-            print(f'[MODEL LOADING ERROR] Unable to load model {model_id}: Failed to process warm-up')
-    except Exception as e:
-        print(f'[MODEL LOADING ERROR] Warm-up failed: {e}')
-        return False
-    return False
+    BatchMode=yes is the load-bearing option: without it ssh will sit on a
+    password prompt forever if key auth breaks, and this coroutine never
+    returns.  accept-new (rather than the old `no`) still trusts a first-seen
+    host but starts rejecting a changed key afterwards.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        'ssh',
+        '-o', 'BatchMode=yes',
+        '-o', 'ConnectTimeout=5',
+        '-o', 'StrictHostKeyChecking=accept-new',
+        f'{PC_USER}@{PC_IP}', *argv,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await proc.communicate()
+    return proc.returncode, out.decode().strip(), err.decode().strip()
 
 
-async def unload_model():
-    global LOADED_MODEL, PC_STATE
-
-    try:
-        result = await HTTP_CLIENT.post(f'{LLAMA_URL}/models/unload', json={'model': LOADED_MODEL})
-        if result.status_code == 200:
-            print(f'[MODEL UNLOADING] Model {LOADED_MODEL} successfully unloaded')
-            LOADED_MODEL = None
-            return
-    except Exception as e:
-        print(f'[MODEL UNLOADING ERROR] Failed to unload model: {e}')
+async def ninferctl(verb: str) -> tuple[int, str, str]:
+    # `sudo -n` fails immediately instead of prompting, so a broken NOPASSWD
+    # rule surfaces as an error rather than a hang.
+    return await ssh('sudo', '-n', PC_CTL, verb)
 
 
+async def start_engine() -> None:
+    rc, _, err = await ninferctl('start')
+    if rc != 0:
+        print(f'[ENGINE] start failed (rc={rc}): {err}')
+        return
+    # `systemctl start` on a Type=simple unit returns as soon as the process has
+    # been forked -- long before ~30 GB of weights are in VRAM.  Readiness is
+    # established by polling the HTTP surface, not by this call returning.
+    print('[ENGINE] ninfer-serve started, waiting for it to become ready')
 
 
+async def stop_engine() -> None:
+    global SERVED_MODEL
+
+    rc, _, err = await ninferctl('stop')
+    SERVED_MODEL = None
+    if rc != 0:
+        print(f'[ENGINE] stop failed (rc={rc}): {err}')
+    else:
+        print('[ENGINE] ninfer-serve stopped, VRAM released')
 
 
-async def shutdown_if_idle():
-    global TIMEOUT_COUNTER
-    global PC_STATE
-
-    while True:
-        await asyncio.sleep(60)
-        if time.time() - LAST_REQUEST_TIME > TIMEOUT and PC_STATE == 'ready':
-                if TIMEOUT_COUNTER >= 20: 
-                    print(f'[TIMEOUT TRACKER] No usage detected, shutting down inference machine')
-                    TIMEOUT_COUNTER = 0
-                    PC_STATE = 'off'
-                    await stop_llama()
-                    await ssh_run("shutdown /s /t 60")
-                elif TIMEOUT_COUNTER >= 10:
-                    print(f'[TIMEOUT TRACKER] No usage detected, shutting down llama.cpp server')
-                    PC_STATE = 'unknown'
-                    await stop_llama()
-                elif TIMEOUT_COUNTER >= 5:
-                    print(f'[TIMEOUT TRACKER] No usage detected, unloading current model {LOADED_MODEL}')
-                    PC_STATE = 'unknown'
-                    await unload_model()
-                print(f'[TIMEOUT TRACKER] Detected timeout period: {TIMEOUT - TIMEOUT_COUNTER}/{TIMEOUT}')
-                TIMEOUT_COUNTER += 1
-        else: TIMEOUT_COUNTER = 0
-
+async def poweroff_pc() -> None:
+    rc, _, err = await ninferctl('poweroff')
+    # systemctl poweroff queues the job and returns, so rc should be 0; a
+    # dropped connection as the machine goes down is still a success.
+    if rc != 0:
+        print(f'[POWER] poweroff returned rc={rc}: {err}')
+    print('[POWER] Inference machine powering off')
 
 
 async def is_dnd_active() -> bool:
+    """Owner has claimed the machine.  POSIX `test -e`, not PowerShell."""
+    rc, _, _ = await ssh('test', '-e', shlex.quote(DND_FLAG))
+    return rc == 0
+
+
+async def is_pc_reachable() -> bool:
+    # Linux ping flags -- this runs on the homeserver, not on the PC.
+    proc = await asyncio.create_subprocess_exec(
+        'ping', '-c', '1', '-W', '2', PC_IP,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    return await proc.wait() == 0
+
+
+async def is_engine_running() -> bool:
+    """Probe the OpenAI surface and remember which model is loaded.
+
+    NInfer has no /health, but it does serve /v1/models, which doubles as a
+    liveness check and as the source of truth for SERVED_MODEL.
+    """
+    global SERVED_MODEL
+
     try:
-        result = await ssh_run('powershell -c "Test-Path C:\\Users\\Karl\\.llama-proxy\\llama-dnd.flag"')
-        return result.strip().lower() == "true"
+        result = await HTTP_CLIENT.get(f'{ENGINE_URL}/v1/models', timeout=3)
     except Exception:
         return False
 
+    if result.status_code != 200:
+        return False
 
-async def check_avaibility():
+    try:
+        data = result.json().get('data', [])
+        if data:
+            SERVED_MODEL = data[0].get('id')
+    except Exception:
+        # Alive but unparseable -- still alive, which is what was asked.
+        pass
+
+    return True
+
+
+def check_model(model_id: str | None) -> None:
+    if not STRICT_MODEL_CHECK or model_id is None or SERVED_MODEL is None:
+        return
+    if model_id != SERVED_MODEL:
+        raise ModelMismatch(
+            f'This engine serves "{SERVED_MODEL}" and cannot switch models at '
+            f'runtime; the request asked for "{model_id}".'
+        )
+
+
+# --------------------------------------------------------------------------- #
+#  Background loops
+# --------------------------------------------------------------------------- #
+
+async def idle_watchdog() -> None:
+    global PC_STATE, WE_BOOTED_PC
+
+    while True:
+        await asyncio.sleep(IDLE_POLL)
+
+        # 'starting' -- a boot is in flight.  'off' -- nothing to do.
+        # 'do-not-disturb' -- the owner is using the machine; never power off a
+        # PC someone is sitting in front of.
+        if PC_STATE in ('off', 'starting', 'do-not-disturb'):
+            continue
+
+        idle = time.time() - LAST_REQUEST_TIME
+        if idle < STOP_ENGINE_AFTER:
+            continue
+
+        if PC_STATE == 'ready':
+            print(f'[IDLE] {int(idle / 60)} min idle, stopping engine')
+            await stop_engine()
+            PC_STATE = 'unknown'
+
+        if idle >= POWEROFF_AFTER and WE_BOOTED_PC:
+            # Re-check live rather than trusting cached state: the owner may
+            # have sat down at the machine since the last availability sweep.
+            if await is_dnd_active():
+                PC_STATE = 'do-not-disturb'
+                continue
+            print(f'[IDLE] {int(idle / 60)} min idle, powering machine off')
+            await poweroff_pc()
+            PC_STATE = 'off'
+            WE_BOOTED_PC = False
+
+
+async def check_availability() -> None:
     global PC_STATE
 
     while True:
-        await asyncio.sleep(30)
-        if not await is_pc_reachable():
-            if PC_STATE != 'starting': PC_STATE = 'off'
+        await asyncio.sleep(AVAILABILITY_POLL)
+
+        # Never race the boot sequence: it owns PC_STATE while it runs.
+        if PC_STATE == 'starting':
             continue
+
+        if not await is_pc_reachable():
+            PC_STATE = 'off'
+            continue
+
         if await is_dnd_active():
-            if PC_STATE == 'ready': 
-                print(f'[DO-NOT-DISTURB] Do-not-disturb enabled')
-                await stop_llama()
+            if PC_STATE == 'ready':
+                print('[DND] Do-not-disturb flag present, releasing the GPU')
+                await stop_engine()
             PC_STATE = 'do-not-disturb'
         elif PC_STATE == 'do-not-disturb':
             PC_STATE = 'unknown'
 
 
+# --------------------------------------------------------------------------- #
+#  Readiness
+# --------------------------------------------------------------------------- #
 
-@app.on_event("startup")
-async def startup():
-    print('[SERVICE] Starting up Service')
+async def ensure_inference_ready(model_id: str | None) -> None:
+    global PC_STATE, WE_BOOTED_PC
+
+    # Fast path, no lock: the overwhelmingly common case is "already up".
+    if PC_STATE == 'do-not-disturb':
+        raise RuntimeError('[DND] Request blocked by the owner of the machine')
+    if PC_STATE == 'starting':
+        raise RuntimeError('[BUSY] The inference machine is still starting, retry shortly')
+    if PC_STATE == 'ready':
+        check_model(model_id)
+        return
+
+    async with BOOT_LOCK:
+        # Double-checked locking: whoever held the lock before us may have
+        # finished the whole boot while we were queued.
+        if PC_STATE == 'do-not-disturb':
+            raise RuntimeError('[DND] Request blocked by the owner of the machine')
+        if PC_STATE == 'ready':
+            check_model(model_id)
+            return
+
+        PC_STATE = 'starting'
+        try:
+            if not await is_pc_reachable():
+                print('[BOOT] Waking the inference machine')
+                await send_wol()
+                WE_BOOTED_PC = True
+
+                for _ in range(BOOT_POLL[0]):
+                    await asyncio.sleep(BOOT_POLL[1])
+                    if await is_pc_reachable():
+                        break
+                else:
+                    PC_STATE = 'off'
+                    raise RuntimeError('[BOOT] Machine did not come up; Wake-on-LAN unsuccessful')
+
+                print('[BOOT] Machine is up, giving sshd a moment')
+                # ping answers before sshd binds; without this the first
+                # ninferctl call reliably fails with "connection refused".
+                await asyncio.sleep(10)
+
+            if not await is_engine_running():
+                await start_engine()
+                for _ in range(ENGINE_POLL[0]):
+                    await asyncio.sleep(ENGINE_POLL[1])
+                    if await is_engine_running():
+                        break
+                else:
+                    raise RuntimeError('[ENGINE] ninfer-serve did not become ready in time')
+
+            print(f'[READY] Engine serving "{SERVED_MODEL}"')
+            PC_STATE = 'ready'
+        except BaseException:
+            # Never leave the state pinned at 'starting': every later request
+            # would 503 with "still starting" forever.
+            if PC_STATE == 'starting':
+                PC_STATE = 'unknown'
+            raise
+
+    check_model(model_id)
+
+
+# --------------------------------------------------------------------------- #
+#  App
+# --------------------------------------------------------------------------- #
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global BOOT_LOCK, HTTP_CLIENT
 
+    print('[SERVICE] Starting llama-proxy')
     BOOT_LOCK = asyncio.Lock()
     HTTP_CLIENT = httpx.AsyncClient(
-        limits=httpx.Limits(
-            max_connections=10, 
-            max_keepalive_connections=0  
-        )
+        limits=httpx.Limits(max_connections=10, max_keepalive_connections=0),
+        # httpx defaults to a 5 s read timeout, which is shorter than the
+        # prefill of a large context and far shorter than a non-streamed
+        # completion.  Long read budget, short connect budget.
+        timeout=httpx.Timeout(connect=5.0, read=600.0, write=60.0, pool=10.0),
     )
-    asyncio.create_task(shutdown_if_idle())
-    asyncio.create_task(check_avaibility())
 
+    tasks = [
+        asyncio.create_task(idle_watchdog()),
+        asyncio.create_task(check_availability()),
+    ]
 
+    yield
 
-@app.on_event("shutdown")
-async def shutdown():
-    print(f'[SERVICE] Shutting off Service')
+    print('[SERVICE] Shutting down llama-proxy')
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
-    await stop_llama()
+    # Releases the GPU when the proxy goes away.  Note the tradeoff: the module
+    # sets restartTriggers on this file, so editing it and rebuilding drops a
+    # warm model.  Delete this line if you would rather keep the engine up
+    # across proxy restarts and let the idle watchdog collect it later.
+    await stop_engine()
     await HTTP_CLIENT.aclose()
 
 
+app = FastAPI(lifespan=lifespan)
 
 
-
-async def is_pc_reachable() -> bool:
-    proc = await asyncio.create_subprocess_exec(
-        'ping', '-c', '1', '-W', '2', WINDOWS_IP,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL
-    )
-    return await proc.wait() == 0
-
-
-
-async def is_llama_running() -> bool:
-    print(f'[CHECK LLAMA] Checking if llama.cpp server is running')
-
-    try:
-        result = await HTTP_CLIENT.get(f"{LLAMA_URL}/health", timeout=2)
-        if result.status_code == 200:
-            print(f'[CHECK LLAMA] llama.cpp server is running')
-            return True
-        else: 
-            print(f'[CHECK LLAMA ERROR] llama.cpp server is not running')
-            return False
-    except Exception:
-        print(f'[CHECK LLAMA] llama.cpp server is not responding, assuming off')
-        return False
-    
+# Registered before the catch-all, because FastAPI matches routes in
+# registration order and "/{path:path}" would otherwise swallow this.  Lets you
+# inspect the state machine without waking the PC.
+@app.get('/proxy/status')
+async def proxy_status():
+    return {
+        'pc_state': PC_STATE,
+        'served_model': SERVED_MODEL,
+        'idle_seconds': int(time.time() - LAST_REQUEST_TIME),
+        'woken_by_proxy': WE_BOOTED_PC,
+    }
 
 
-async def is_model_loaded(model_id: str) -> bool:
-    global LOADED_MODEL
-    print(f'[CHECK MODEL] Checking which models are loaded')
-
-    try:
-        result = await HTTP_CLIENT.get(f'{LLAMA_URL}/models')
-        if result.status_code != 200:  return False
-
-        models = result.json().get('data', [])
-        for model in models:
-            if model.get('status', {}).get('value') == 'loaded' and model.get('id') == model_id:
-                print(f'[CHECK MODEL] Affirmed that model {model.get("id")} is loaded ')
-                return True
-        else:
-            print(f'[CHECK MODEL] Model {model_id} is not loaded!')
-            return False
-        
-    except Exception: 
-        print(f'[CHECK MODEL ERROR] Unable to reach endpoint /models!')
-        return False
-
-
-
-async def ensure_inference_ready(model_id: str):
-    global PC_STATE, LOADED_MODEL
-
-    if model_id is not None and model_id != LOADED_MODEL and LOADED_MODEL is not None: 
-        raise RuntimeError(f"[MODEL LOADING ERROR] Can't use model {model_id} when {LOADED_MODEL} is active")
-
-    print(f'[PREPARE] Checking and Starting Inference Engine')
-    print(f'[PREPARE] Checking and Starting Inference Engine')
-    if PC_STATE == 'ready' and (model_id is None or model_id == LOADED_MODEL): return
-    if PC_STATE == 'starting': raise RuntimeError('[PREPARE ERROR] Another client is already starting the Inference Machine, please wait')
-    if PC_STATE == 'do-not-disturb': raise RuntimeError("[DO-NOT-DISTURB] Request blocked by owner")    
-
-    async with BOOT_LOCK:
-        if model_id is not None and model_id != LOADED_MODEL and LOADED_MODEL is not None: 
-            raise RuntimeError(f"[MODEL LOADING ERROR] Can't use model {model_id} when {LOADED_MODEL} is active")
-        if PC_STATE == 'ready' and (model_id is None or model_id == LOADED_MODEL): return
-        if PC_STATE == 'starting': raise RuntimeError('[PREPARE ERROR] Another client is already starting the Inference Machine, please wait')
-        if PC_STATE == 'do-not-disturb': raise RuntimeError("[DO-NOT-DISTURB] Request blocked by owner")
-
-        if not await is_pc_reachable():
-            print(f'[PREPARE] Booting up Inference Machien')
-            PC_STATE = 'starting'
-            await send_wol()
-            for _ in range(60):
-                await asyncio.sleep(2)
-                if await is_pc_reachable():
-                    break
-            else:
-                PC_STATE = 'off'
-                raise RuntimeError("[BOOTING ERROR] Unable to boot Inference Machine up in time, WakeOnLan unsuccessful")
-            print('[PREPARE] Successfully booted Inference Machien')
-            await asyncio.sleep(5)
-
-
-        if not await is_llama_running():
-            print(f'[PREPARE] Starting llama router service')
-            PC_STATE = 'starting'
-            await start_llama()
-            for _ in range(30):
-                await asyncio.sleep(2)
-                try:
-                    if await is_llama_running(): break
-                except Exception: pass
-            else: 
-                PC_STATE = 'unknown'
-                raise RuntimeError("[LLAMA ERROR] Unable to boot llama.cpp up in time")
-            await asyncio.sleep(5)
-
-        
-        if model_id is not None:
-            if not await is_model_loaded(model_id):
-                print(f'[PREPARING] Loading model {model_id}')
-                PC_STATE = 'starting'
-                await load_model(model_id)
-                for _ in range(60):
-                    await asyncio.sleep(2)
-                    try:
-                        if await is_model_loaded(model_id): break
-                    except Exception: pass
-                else:
-                    PC_STATE = 'unknown'
-                    raise RuntimeError('[MODEL LOADING ERRRO] Unable to load model in time')
-                await asyncio.sleep(5)
-
-
-        print(f'[PREPARE] Inferene machine successfully started')
-        PC_STATE = 'ready'
-
-
-
-
-@app.api_route("/{path:path}", methods=["GET", "POST", "DELETE"])
+@app.api_route('/{path:path}', methods=['GET', 'POST', 'DELETE'])
 async def proxy(request: Request, path: str):
-    print('[SERVICE] Received request for inference')
-    
     global LAST_REQUEST_TIME
     LAST_REQUEST_TIME = time.time()
 
     body = await request.body()
     headers = dict(request.headers)
-    headers.pop("host", None)
-    headers.pop("accept-encoding", None)
+    headers.pop('host', None)
+    headers.pop('accept-encoding', None)
 
     model_id = None
-    if request.method == "POST" and body:
+    if request.method == 'POST' and body:
         try:
-            data = json.loads(body)
-            model_id = data.get("model")
-        except: pass
-
-
+            # Both the OpenAI and the Anthropic surfaces carry the model in a
+            # top-level "model" field, so one parse covers /v1/chat/completions,
+            # /v1/responses and /v1/messages alike.
+            model_id = json.loads(body).get('model')
+        except Exception:
+            pass
 
     try:
         await ensure_inference_ready(model_id)
+    except ModelMismatch as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
-    if PC_STATE != 'ready': raise HTTPException(status_code=503, detail="[PREPARING INFERENCE MACHINE ERROR] Unable to start llama-server!")
-
-
     req = HTTP_CLIENT.build_request(
         method=request.method,
-        url=f"http://{WINDOWS_IP}:{LLAMA_PORT}/{path}",
+        url=f'{ENGINE_URL}/{path}',
         headers=headers,
         content=body,
+        params=request.query_params,
     )
     resp = await HTTP_CLIENT.send(req, stream=True)
 
     async def body_iterator():
         try:
-            async for chunk in resp.aiter_bytes():
+            async for chunk in resp.aiter_raw():
                 yield chunk
         finally:
             await resp.aclose()
 
     response_headers = {
-        k: v
-        for k, v in resp.headers.items()
-        if k.lower() not in (
-            "content-length",
-            "transfer-encoding",
-            "connection",
-        )
+        k: v for k, v in resp.headers.items()
+        if k.lower() not in ('content-length', 'transfer-encoding', 'connection', 'content-encoding')
     }
-
-    print('[SERVICE] Successfully processed request')
 
     return StreamingResponse(
         body_iterator(),
         status_code=resp.status_code,
         headers=response_headers,
-        media_type=resp.headers.get("content-type"),
+        media_type=resp.headers.get('content-type'),
     )
 
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8090)
+if __name__ == '__main__':
+    uvicorn.run(app, host='0.0.0.0', port=8090)
