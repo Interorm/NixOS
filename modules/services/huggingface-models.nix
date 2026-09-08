@@ -11,7 +11,7 @@
     # HF_HUB_ENABLE_HF_TRANSFER=1 below starts doing something.  It is left out
     # by default so that a missing/renamed attribute cannot break evaluation of
     # the whole system.
-    hfCli = pkgs.python3.withPackages (ps: [ ps.huggingface-hub ]);
+    hfCli = pkgs.python3.withPackages (ps: [ ps.hf-transfer ps.huggingface-hub ]);
 
     # The stable, constant path a server module points at.  Note this depends
     # only on `directory` and `models`, never on `paths` itself -- no cycle.

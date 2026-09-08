@@ -9,7 +9,7 @@
     # VERIFY ON THE MACHINE:  nix repl -> :lf . -> pkgs.cudaPackages_13
     # If that attribute does not exist on your nixpkgs rev, check what does:
     #   nix eval nixpkgs#legacyPackages.x86_64-linux --apply 'p: builtins.filter (lib.hasPrefix "cudaPackages") (builtins.attrNames p)'
-    cudaPackages = pkgs.cudaPackages_13;
+    cudaPackages = pkgs.cudaPackages;
 
     ninfer = pkgs.stdenv.mkDerivation (finalAttrs: {
         pname = "ninfer";
@@ -24,7 +24,7 @@
             # or leave lib.fakeHash in place, run the build, and copy the
             # "got: sha256-..." from the error.  That trial-and-error loop is
             # the normal Nix workflow, not a mistake.
-            rev = "main";
+            rev = "641ef3e7af08fe8f58b769e9f7505f642975a9dc";
             hash = lib.fakeHash;
         };
 

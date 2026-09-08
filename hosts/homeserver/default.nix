@@ -57,7 +57,7 @@
             pc = {
                 url = "http://localhost:8090";
                 discovery = "static";
-                models = [ "TODO-exact-id" ];   # see below
+                models = [ "qwen3.8-27b" ];   # see below
                 healthPath = "/proxy/status";
                 timeout = 1200.0;               # WoL + boot + 30 GB load ≈ 8 min
             };
