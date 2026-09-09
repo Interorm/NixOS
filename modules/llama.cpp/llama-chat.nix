@@ -52,6 +52,7 @@ in {
                 "--port" "8070"
                 "--n-gpu-layers" "999"
                 "--parallel" "4"
+                "--ctx-size" "49152"
                 "--ctx-checkpoints" "4"
                 "--flash-attn" "on"
             ];
