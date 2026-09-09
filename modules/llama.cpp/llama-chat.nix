@@ -14,7 +14,7 @@
 
     model = config.services.huggingface-models.paths.qwen-chat;
 in {
-    imports = [ ../huggingface-models.nix ];
+    imports = [ ./huggingface-models.nix ];
 
     # PLACEHOLDER COORDINATES -- I have not verified that this repo/file pair
     # exists, and I am not going to guess a repo id into your config and let you

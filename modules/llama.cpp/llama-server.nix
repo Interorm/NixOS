@@ -92,7 +92,7 @@
         esac
     '';
 in {
-    imports = [ ../huggingface-models.nix ];
+    imports = [ ./huggingface-models.nix ];
 
     services.huggingface-models.models.qwen3-8-27b = {
         # nvfp4 weights: ~4-bit, fits the 5090's 32 GB with room for a large KV

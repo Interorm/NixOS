@@ -17,7 +17,7 @@
     # follows automatically.
     model = config.services.huggingface-models.paths.qwen-coder;
 in {
-    imports = [ ../huggingface-models.nix ];
+    imports = [ ./huggingface-models.nix ];
 
     # VERIFY the filename against the repo's file list -- Qwen's GGUF repos
     # sometimes shard large quants into
