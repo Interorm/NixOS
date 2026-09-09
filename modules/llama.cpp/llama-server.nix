@@ -165,7 +165,7 @@ in {
     services.openssh = {
         enable = true;
     };
-    users.users.karl.openssh.authorizedKeys.keys = [
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKCkzbQXGin8JbfD5KjJ+fUJGznS5zXnuJPHpDtNWBfE root@homeserver"
+    users.users."karl".openssh.authorizedKeys.keys = [
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPootR7FogHsp0OdnDu6kjPj2rqHribx0OnFvzyfnYGY root@homeserver"
     ];
 }
