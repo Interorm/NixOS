@@ -49,6 +49,7 @@
             cuda_cudart
             cccl
             libcublas
+            cuda_nvtx
         ]);
 
         cmakeFlags = [
