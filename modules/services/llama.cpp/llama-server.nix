@@ -45,7 +45,7 @@
         buildInputs = with pkgs; [
             curl         # libcurl >= 7.85, for hub downloads
             ffmpeg       # libavformat>=60 libavcodec>=60 libavutil>=58 libswscale>=7
-        ] ++ (with cudaPackages; [
+        ] ++ (with cudaPackages_13_2; [
             cuda_cudart
             cccl
             libcublas
