@@ -11,13 +11,12 @@
 
         ../../modules/hardware/nvidia.nix
         ../../modules/development/cuda.nix
-        ../../modules/development/remote-desktop.nix
 
-        ../../modules/services/llama.cpp/model-gateway.nix
-        ../../modules/services/llama.cpp/llama-proxy.nix
-        ../../modules/services/llama.cpp/llama-coder.nix
-        ../../modules/services/llama.cpp/llama-chat.nix
-        ../../modules/services/huggingface-models.nix
+        ../../modules/llama.cpp/model-gateway.nix
+        ../../modules/llama.cpp/llama-proxy.nix
+        ../../modules/llama.cpp/llama-coder.nix
+        ../../modules/llama.cpp/llama-chat.nix
+        ../../modules/llama.cpp/huggingface-models.nix
     ];
 
     # Was `network.hostname` -- no such option path exists.  It is
@@ -47,26 +46,19 @@
         port = 8080;
 
         endpoints = {
-            # Always-on: the gateway asks them what they serve, every 60 s.
-            # `discovery` defaults to "probe", so only the URL is needed.
             coder = { url = "http://localhost:8060"; };
             chat  = { url = "http://localhost:8070"; };
 
-            # Wake-on-demand: NEVER probe this one.  Its /v1/models goes through
-            # the catch-all route, which boots the PC.  So: declared ids + a
-            # liveness poll of /proxy/status, which is side-effect-free.
             pc = {
                 url = "http://localhost:8090";
                 discovery = "static";
-                models = [ "qwen3.8-27b" ];   # see below
+                models = [ "Qwen3.8-27B" ]; 
                 healthPath = "/proxy/status";
-                timeout = 1200.0;               # WoL + boot + 30 GB load ≈ 8 min
+                timeout = 1200.0;       
             };
         };
     };
 
 
-    # NOT a version to bump: it pins the on-disk state formats (postgres major,
-    # etc.) that this host was first installed with.  Leave it alone forever.
     system.stateVersion = "26.05";
 }

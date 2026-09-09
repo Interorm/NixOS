@@ -122,40 +122,28 @@ in {
             ExecStart = lib.escapeShellArgs [
                 "${ninfer}/bin/ninfer-serve"
                 model
+                "--model-id" "Qwen3.8-27B"
 
                 "--host" "0.0.0.0"
                 "--port" "8080"
 
-                # Context and KV budget are fixed at startup -- NInfer has no
-                # dynamic growth, so these are the ceiling for the process's
-                # lifetime.
                 "--max-context" "240000"
                 "--kv-capacity" "240000"
                 "--kv-dtype" "fp8"
 
-                # Concurrency is likewise fixed at startup (1-8, no preemption).
                 "--max-concurrency" "2"
 
                 "--device-state-slots" "2"
                 "--host-state-slots" "8"
                 "--host-kv-mib" "16384"
 
-                # Multi-token prediction: speculative decode using the model's
-                # own MTP head, so no separate draft model to manage.
                 "--spec" "mtp"
                 "--draft-tokens" "3"
                 "--lm-head-draft"
 
-                # Keep <think> blocks in the response rather than stripping them.
                 "--preserve-thinking"
             ];
 
-            # Note what this does NOT do: with Type=simple, systemd calls the
-            # unit "started" the moment it has forked the process, so
-            # TimeoutStartSec never gets to cover the ~30 GB VRAM load.  Nothing
-            # on this machine waits for readiness -- the homeserver's proxy
-            # establishes it by polling /v1/models.  Kept only so a process that
-            # hangs before exec is eventually reaped.
             TimeoutStartSec = "600";
 
             Restart = "on-failure";
@@ -163,22 +151,9 @@ in {
         };
     };
 
-    # The proxy needs to reach both the API and the control plane.
     networking.firewall.allowedTCPPorts = [ 8080 ];
+    networking.interfaces."enp6s0".wakeOnLan.enable = true;
 
-    services.openssh = {
-        enable = true;
-        settings = {
-            PasswordAuthentication = false;
-            PermitRootLogin = "no";
-        };
-    };
-
-    # sudo matches the Cmnd_Spec against the path as written on the command
-    # line, and does NOT resolve symlinks.  So this must name the stable
-    # /run/current-system/sw/bin path that the proxy actually invokes -- a
-    # ${ninferctl}/bin/ninferctl store path here would break on every rebuild
-    # that changes the script, and would not match what the proxy types anyway.
     security.sudo.extraRules = [{
         users = [ "karl" ];
         commands = [{
@@ -187,16 +162,10 @@ in {
         }];
     }];
 
-    # TODO: paste the homeserver's public key (`cat /root/.ssh/id_ed25519.pub`
-    # there; generate with `ssh-keygen -t ed25519` if it has none).  Until this
-    # is filled in, the proxy cannot start the engine and every request will
-    # 503.
+    services.openssh = {
+        enable = true;
+    };
     users.users.karl.openssh.authorizedKeys.keys = [
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKCkzbQXGin8JbfD5KjJ+fUJGznS5zXnuJPHpDtNWBfE root@homeserver"
     ];
-
-    # TODO: Wake-on-LAN.  Find the interface with `ip link`, then uncomment.
-    # Also enable WoL in the UEFI -- the NixOS option only covers the driver
-    # side, and the firmware setting is what keeps the NIC powered in S5.
-    networking.interfaces."enp6s0".wakeOnLan.enable = true;
 }
