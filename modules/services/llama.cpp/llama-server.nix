@@ -9,7 +9,7 @@
     # VERIFY ON THE MACHINE:  nix repl -> :lf . -> pkgs.cudaPackages_13
     # If that attribute does not exist on your nixpkgs rev, check what does:
     #   nix eval nixpkgs#legacyPackages.x86_64-linux --apply 'p: builtins.filter (lib.hasPrefix "cudaPackages") (builtins.attrNames p)'
-    cudaPackages = pkgs.cudaPackages;
+    cudaPackages = pkgs.cudaPackages_13_2;
 
     ninfer = pkgs.stdenv.mkDerivation (finalAttrs: {
         pname = "ninfer";
@@ -45,7 +45,7 @@
         buildInputs = with pkgs; [
             curl         # libcurl >= 7.85, for hub downloads
             ffmpeg       # libavformat>=60 libavcodec>=60 libavutil>=58 libswscale>=7
-        ] ++ (with cudaPackages_13_2; [
+        ] ++ (with cudaPackages; [
             cuda_cudart
             cccl
             libcublas
