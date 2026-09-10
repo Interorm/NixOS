@@ -9,7 +9,8 @@
 
 
    environment.systemPackages = with pkgs; [
-      bluetoothctl
       blueman
    ];
+
+   services.blueman.enable = true;
 }
