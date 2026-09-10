@@ -8,16 +8,14 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    hermes-agent.url = "github:NousResearch/hermes-agent";
   };
 
   outputs = { self, nixpkgs, home-manager, ... }@inputs:
     let
       system = "x86_64-linux";
 
-      # A nixpkgs instance for the flake's *own* outputs (packages, lib,
-      # devShells).  The nixosConfigurations below do NOT use this one -- each
-      # of them builds its own `pkgs` from the `nixpkgs.*` options set inside
-      # its modules.
       pkgs = import nixpkgs {
         inherit system;
         config.allowUnfree = true;
@@ -53,7 +51,17 @@
           inherit system;
           specialArgs = { inherit inputs; };
 
-          modules = [ ./hosts/homeserver/default.nix ];
+          modules = [
+            ./hosts/homeserver/default.nix
+
+            home-manager.nixosModules.home-manager
+            {
+              home-manager.useGlobalPkgs = true;
+              home-manager.useUserPackages = true;
+              home-manager.extraSpecialArgs = { inherit inputs; };
+              home-manager.backupFileExtension = "hm-bak";
+            }
+          ];
         };
       };
 
