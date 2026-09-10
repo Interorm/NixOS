@@ -11,14 +11,13 @@
             image_proxy = true;
         };
 
-        bot_detection = false;
-
         engines = [
             { name = "bing"; disabled = true; }
             { name = "duckduckgo"; disabled = true; }
             { name = "yahoo"; disabled = true; }
             { name = "qwant"; disabled = true; }
             { name = "brave"; disabled = true; }
+            { name = "startpage"; disabled = true; }
             { name = "google"; disabled = false; }
         ];
 
