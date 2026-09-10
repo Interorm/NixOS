@@ -11,9 +11,15 @@
             image_proxy = true;
         };
 
+        bot_detection = false;
+
         engines = [
-            # { name = "All Engines"; disabled = true; }
-            { name = "bing"; disabled = false; }
+            { name = "bing"; disabled = true; }
+            { name = "duckduckgo"; disabled = true; }
+            { name = "yahoo"; disabled = true; }
+            { name = "qwant"; disabled = true; }
+            { name = "brave"; disabled = true; }
+            { name = "google"; disabled = false; }
         ];
 
         search.formats = [ "html" "json" ];
