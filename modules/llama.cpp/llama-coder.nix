@@ -33,23 +33,11 @@ in {
 
     environment.systemPackages = [ llamacpp-cuda ];
 
-    # The model blobs are far too large for the Nix store and are .gitignored,
-    # so they live in mutable state.  This replaces the original
-    # `builtins.pathExists ./models/...` guard, which could never work: it runs
-    # at *evaluation* time against the read-only copy of the flake in
-    # /nix/store, where ./models does not exist.  ConditionPathExists is checked
-    # by systemd at *start* time against the real filesystem.
-    #
-    # (The directory itself is now created by huggingface-models.nix, so the
-    # tmpfiles rule that used to live here is gone.)
 
     systemd.services.llama-code = {
         description = "llama.cpp Server for Coding Completion";
         wantedBy = [ "multi-user.target" ];
 
-        # `wants` not `requires`: if the download fails we still want the unit
-        # to be *tried*, at which point ConditionPathExists cleanly skips it.
-        # `requires` would drag llama-code into a failed state instead.
         after = [ "network.target" "hf-model-qwen-coder.service" ];
         wants = [ "hf-model-qwen-coder.service" ];
 
@@ -70,6 +58,8 @@ in {
                 "--ctx-size" "32768"
                 "--cache-reuse" "256"
                 "--ctx-checkpoints" "4"
+                "--cache-type-k" "q8_0"
+                "--cache-type-v" "q8_0"
                 "--flash-attn" "on"
             ];
 

@@ -12,19 +12,21 @@
         ];
     });
 
-    model = config.services.huggingface-models.paths.qwen-chat;
+    model  = config.services.huggingface-models.paths.qwen-chat;
+    mmproj = config.services.huggingface-models.paths.qwen-chat-mmproj;
 in {
     imports = [ ./huggingface-models.nix ];
 
-    # PLACEHOLDER COORDINATES -- I have not verified that this repo/file pair
-    # exists, and I am not going to guess a repo id into your config and let you
-    # find out at 3 a.m.  Look up the actual repo on huggingface.co, copy the
-    # exact filename from its "Files" tab, and replace both fields.  `target`
-    # can stay as-is; that is the whole point of decoupling it.
     services.huggingface-models.models.qwen-chat = {
-        repo = "unsloth/Qwen3.5-9B-GGUF";
-        file = "Qwen3.5-9B-UD-Q6_K_XL.gguf";
-        target = "Qwen3.5-9B-Q6.gguf";
+        repo = "unsloth/gemma-4-E4B-it-qat-GGUF";
+        file = "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
+        target = "Gemma4-E4B-Q4.gguf";
+    };
+
+    services.huggingface-models.models.qwen-chat-mmproj = {
+        repo = "unsloth/gemma-4-E4B-it-qat-GGUF";
+        file = "mmproj-F16.gguf";
+        target = "Gemma4-E4B-mmproj-F16.gguf";
     };
 
     environment.systemPackages = [ llamacpp-cuda ];
@@ -35,10 +37,10 @@ in {
     systemd.services.llama-chat = {
         description = "llama.cpp Server for normal Chat model";
         wantedBy = [ "multi-user.target" ];
-        after = [ "network.target" "hf-model-qwen-chat.service" ];
-        wants = [ "hf-model-qwen-chat.service" ];
+        after = [ "network.target" "hf-model-qwen-chat.service" "hf-model-qwen-chat-mmproj.service" ];
+        wants = [ "hf-model-qwen-chat.service" "hf-model-qwen-chat-mmproj.service" ];
 
-        unitConfig.ConditionPathExists = model;
+        unitConfig.ConditionPathExists = [ model mmproj ];
 
         serviceConfig = {
             Type = "simple";
@@ -47,14 +49,20 @@ in {
             ExecStart = lib.escapeShellArgs [
                 "${llamacpp-cuda}/bin/llama-server"
                 "--model" model
-                "--alias" "Qwen3.5-9B"
+                "--mmproj" mmproj
+                "--jinja" "on"
+                "--alias" "Gemma4-E4B"
                 "--host" "0.0.0.0"
                 "--port" "8070"
                 "--n-gpu-layers" "999"
                 "--parallel" "4"
                 "--ctx-size" "49152"
                 "--ctx-checkpoints" "4"
-                "--flash-attn" "on"
+                "--cache-type-k" "q8_0"
+                "--cache-type-v" "q8_0"
+                "--spec-type" "draft-mtp"
+                "--spec-draft-n-max" "4"
+                "--flash-attn" "off"
             ];
 
             Restart = "always";

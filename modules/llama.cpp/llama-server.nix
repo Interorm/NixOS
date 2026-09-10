@@ -2,13 +2,6 @@
     pkgs, config, lib,
     ...
 }: let
-    # NInfer requires CUDA Toolkit >= 13.1 and rejects every -DCMAKE_CUDA_ARCHITECTURES
-    # other than 120a (Blackwell, sm_120a -- the RTX 5090).  That single-arch
-    # restriction is upstream's, not ours: the kernels use arch-specific PTX.
-    #
-    # VERIFY ON THE MACHINE:  nix repl -> :lf . -> pkgs.cudaPackages_13
-    # If that attribute does not exist on your nixpkgs rev, check what does:
-    #   nix eval nixpkgs#legacyPackages.x86_64-linux --apply 'p: builtins.filter (lib.hasPrefix "cudaPackages") (builtins.attrNames p)'
     cudaPackages = pkgs.cudaPackages_13_2;
 
     ninfer = pkgs.stdenv.mkDerivation (finalAttrs: {
@@ -128,7 +121,7 @@ in {
                 "--port" "8080"
 
                 "--max-context" "240000"
-                "--kv-capacity" "240000"
+                "--kv-capacity" "auto"
                 "--kv-dtype" "fp8"
 
                 "--max-concurrency" "2"
@@ -142,6 +135,8 @@ in {
                 "--lm-head-draft"
 
                 "--preserve-thinking"
+
+                "--vision"
             ];
 
             TimeoutStartSec = "600";

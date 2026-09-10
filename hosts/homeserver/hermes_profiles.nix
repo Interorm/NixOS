@@ -4,7 +4,7 @@
     services.hermes-agents = {
         enable = true;
 
-        defaultModel = "Qwen3.5-9B";
+        defaultModel = "Gemma4-E4B";
 
         dashboardHost = "192.168.42.2";
 
