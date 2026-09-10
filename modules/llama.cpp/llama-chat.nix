@@ -14,6 +14,7 @@
 
     model  = config.services.huggingface-models.paths.qwen-chat;
     mmproj = config.services.huggingface-models.paths.qwen-chat-mmproj;
+    mtp    = config.services.huggingface-models.paths.qwen-chat-mtp;
 in {
     imports = [ ./huggingface-models.nix ];
 
@@ -29,6 +30,17 @@ in {
         target = "Gemma4-E4B-mmproj-F16.gguf";
     };
 
+    # MTP drafter for `--spec-type draft-mtp`.  Also a separate GGUF; llama.cpp
+    # only auto-discovers it with `-hf`, with `--model` it has to be passed as
+    # `--model-draft` or the server dies with "model doesn't contain MTP
+    # layers".  Root file is the smart Q4_0 unsloth recommends; MTP/ holds
+    # Q8_0/F16/BF16 if you want to compare acceptance rates.
+    services.huggingface-models.models.qwen-chat-mtp = {
+        repo = "unsloth/gemma-4-E4B-it-qat-GGUF";
+        file = "mtp-gemma-4-E4B-it.gguf";
+        target = "Gemma4-E4B-mtp-Q4_0.gguf";
+    };
+
     environment.systemPackages = [ llamacpp-cuda ];
 
     # Renamed from `llama-code` to `llama-chat`: this module and llama-coder.nix
@@ -37,10 +49,19 @@ in {
     systemd.services.llama-chat = {
         description = "llama.cpp Server for normal Chat model";
         wantedBy = [ "multi-user.target" ];
-        after = [ "network.target" "hf-model-qwen-chat.service" "hf-model-qwen-chat-mmproj.service" ];
-        wants = [ "hf-model-qwen-chat.service" "hf-model-qwen-chat-mmproj.service" ];
+        after = [
+            "network.target"
+            "hf-model-qwen-chat.service"
+            "hf-model-qwen-chat-mmproj.service"
+            "hf-model-qwen-chat-mtp.service"
+        ];
+        wants = [
+            "hf-model-qwen-chat.service"
+            "hf-model-qwen-chat-mmproj.service"
+            "hf-model-qwen-chat-mtp.service"
+        ];
 
-        unitConfig.ConditionPathExists = [ model mmproj ];
+        unitConfig.ConditionPathExists = [ model mmproj mtp ];
 
         serviceConfig = {
             Type = "simple";
@@ -50,6 +71,7 @@ in {
                 "${llamacpp-cuda}/bin/llama-server"
                 "--model" model
                 "--mmproj" mmproj
+                "--model-draft" mtp
                 "--jinja"
                 "--alias" "Gemma4-E4B"
                 "--host" "0.0.0.0"
@@ -59,10 +81,9 @@ in {
                 "--ctx-size" "49152"
                 "--ctx-checkpoints" "4"
                 "--cache-type-k" "q8_0"
-                "--cache-type-v" "q8_0"
                 "--spec-type" "draft-mtp"
                 "--spec-draft-n-max" "4"
-                "--flash-attn" "on"
+                "--flash-attn" "off"
             ];
 
             Restart = "always";
