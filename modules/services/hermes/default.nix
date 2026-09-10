@@ -75,7 +75,7 @@
             # at runtime, so no secret ever reaches the Nix store.
             settings = lib.recursiveUpdate {
                 model = {
-                    provider = "openai";
+                    provider = "custom";
                     base_url = cfg.modelBaseUrl;
                     default = agent.model;
                     api_key = "\${OPENAI_API_KEY}";
