@@ -50,7 +50,7 @@ in {
                 "${llamacpp-cuda}/bin/llama-server"
                 "--model" model
                 "--mmproj" mmproj
-                "--jinja" "on"
+                "--jinja"
                 "--alias" "Gemma4-E4B"
                 "--host" "0.0.0.0"
                 "--port" "8070"
