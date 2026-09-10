@@ -62,7 +62,7 @@ in {
                 "--cache-type-v" "q8_0"
                 "--spec-type" "draft-mtp"
                 "--spec-draft-n-max" "4"
-                "--flash-attn" "off"
+                "--flash-attn" "on"
             ];
 
             Restart = "always";
