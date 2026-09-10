@@ -34,7 +34,7 @@ in {
 
                 ENABLE_WEB_SEARCH = "true";
                 WEB_SEARCH_ENGINE = "searxng";
-                SEARXNG_QUERY_URL = "http://searxng:3030";
+                SEARXNG_QUERY_URL = "http://searxng:3030/search?q=<query>&format=json";
 
                 WEB_SEARCH_RESULT_COUNT = "10";
                 WEB_SEARCH_CONCURRENT_REQUESTS = "3";
