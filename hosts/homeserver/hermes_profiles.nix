@@ -8,9 +8,28 @@
 
         dashboardHost = "192.168.42.2";
 
-        # Attribute name == Unix user name == owner of that agent.  Each one
-        # needs /etc/hermes/<name>.env created by hand after the first
-        # switch; see the option description in modules/services/hermes.
+        settings = {
+            stt = {
+                enabled = true;
+                provider = "openai";
+                language = "";
+                openai = {
+                    base_url = "http://192.168.42.2:8110/v1";
+                    model = "deepdml/faster-whisper-large-v3-turbo-ct2";
+                    language = "";
+                };
+            };
+            tts = {
+                provider = "openai";
+                openai = {
+                    api_key = "empty-key";
+                    base_url = "http://192.168.42.2:8110/v1";
+                    model = "speaches-ai/Kokoro-82M-v1.0-ONNX";
+                    voice = "af_heart";
+                };
+            };
+        };
+
         agents = {
             karl = {
                 dashboard.port = 9090;
@@ -20,7 +39,8 @@
                 soul = ''
                     You are Karl's personal assistant running on his homelab.
                     Be concise.  You have no GPU of your own; heavy work goes
-                    through the model gateway.
+                    through the model gateway.  Voice messages reach you
+                    already transcribed; answer in the language the user used.
                 '';
             };
             joni = {
@@ -31,7 +51,8 @@
                 soul = ''
                     You are Joni's personal assistant running on his homelab.
                     Be concise.  You have no GPU of your own; heavy work goes
-                    through the model gateway.
+                    through the model gateway.  Voice messages reach you
+                    already transcribed; answer in the language the user used.
                 '';
             };
         };
