@@ -78,7 +78,7 @@ in {
                 "--port" "8070"
                 "--n-gpu-layers" "999"
                 "--parallel" "4"
-                "--ctx-size" "127000"
+                "--ctx-size" "100000"
                 "--ctx-checkpoints" "4"
                 "--cache-type-k" "q8_0"
                 "--spec-type" "draft-mtp"
