@@ -13,6 +13,7 @@
         ../../modules/development/cuda.nix
 
         ../../modules/services/openwebui/default.nix
+        ../../modules/services/minecraft/crafty.nix
 
         ../../modules/llama.cpp/model-gateway.nix
         ../../modules/llama.cpp/llama-proxy.nix
