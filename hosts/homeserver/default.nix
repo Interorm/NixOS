@@ -12,6 +12,8 @@
         ../../modules/hardware/nvidia.nix
         ../../modules/development/cuda.nix
 
+        ../../modules/services/openwebui/default.nix
+
         ../../modules/llama.cpp/model-gateway.nix
         ../../modules/llama.cpp/llama-proxy.nix
         ../../modules/llama.cpp/llama-coder.nix
@@ -19,13 +21,8 @@
         ../../modules/llama.cpp/huggingface-models.nix
     ];
 
-    # Was `network.hostname` -- no such option path exists.  It is
-    # `networking.hostName` (both the plural and the capital N matter).
     networking.hostName = "homeserver";
 
-    # Legacy drivers for 1080/70Ti.  The default nvidia package in nixpkgs no
-    # longer supports Pascal, hence the pin.  nvidia.nix declares these with
-    # lib.mkDefault so this plain definition wins instead of colliding.
     hardware.nvidia = {
         package = config.boot.kernelPackages.nvidiaPackages.legacy_580;
         open = false;
@@ -34,8 +31,6 @@
     # Ported from the pre-flake configuration.nix; modules/hardware/networking.nix
     # only opens 22.
     networking.firewall.allowedTCPPorts = [
-        3000 3030 3035 3060
-        8000 8080
         2000 25565 25566 25567 25568 25569
     ];
 
