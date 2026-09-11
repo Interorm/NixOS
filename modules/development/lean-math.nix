@@ -72,7 +72,7 @@ in {
         # the cache-get + build later; this just lays down the source.
         {
             system.activationScripts.lean-math = {
-                content = ''
+                text = ''
                     set -e
                     if [ -f ${projectPath}/lakefile.toml ]; then
                         echo "lean-math: shared project already in place at ${projectPath}"
