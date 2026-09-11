@@ -1,6 +1,17 @@
 {
+    config,
     ...
 }: {
+    # Shared Lean 4 + Mathlib project for the agents.  One project dir, group-
+    # owned by `lean-math`; the `lean-math` MCP server (declared in
+    # modules/services/hermes/mcps.nix) points both agents at it, so karl and
+    # joni share one olean cache.  Enable it wherever the hermes module is
+    # loaded and list the agent users.
+    services.lean-math = {
+        enable = true;
+        users = [ "karl" "joni" ];
+    };
+
     services.hermes-agents = {
         enable = true;
 

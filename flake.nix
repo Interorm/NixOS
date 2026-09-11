@@ -10,6 +10,16 @@
     };
 
     hermes-agent.url = "github:NousResearch/hermes-agent";
+
+    # MCP servers, pinned to exact commits so an upstream change can't
+    # silently alter what the agents run.  Re-pin deliberately with
+    # `nix flake update <name>` (or by hand), then review the new revision.
+    #
+    # lean-lsp-mcp audited 2026-09 (no eval/exec, list-form subprocesses only,
+    # path sandbox, hardcoded search URLs, TLS via certifi).  Do not enable its
+    # --loogle-local flag: it clones and compiles a third-party repo.
+    lean-lsp-mcp.url = "github:oOo0oOo/lean-lsp-mcp/bb176c58a4f895061561685318e92b8db446f1b5";
+    mcp-nixos.url = "github:utensils/mcp-nixos/6a517811658c21f97bd7703b35546085117fc310";
   };
 
   outputs = { self, nixpkgs, home-manager, ... }@inputs:
