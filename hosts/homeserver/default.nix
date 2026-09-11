@@ -11,6 +11,7 @@
 
         ../../modules/hardware/nvidia.nix
         ../../modules/development/cuda.nix
+        ../../modules/development/lean-math.nix
 
         ../../modules/services/minecraft/crafty.nix
 

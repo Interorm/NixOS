@@ -1,12 +1,7 @@
 {
-    config,
+    pkgs, config,
     ...
 }: {
-    # Shared Lean 4 + Mathlib project for the agents.  One project dir, group-
-    # owned by `lean-math`; the `lean-math` MCP server (declared in
-    # modules/services/hermes/mcps.nix) points both agents at it, so karl and
-    # joni share one olean cache.  Enable it wherever the hermes module is
-    # loaded and list the agent users.
     services.lean-math = {
         enable = true;
         users = [ "karl" "joni" ];
@@ -18,6 +13,7 @@
         defaultModel = "Gemma4-E4B";
 
         dashboardHost = "192.168.42.2";
+        dependencyGroups = [ "messaging" "anthropic" ];
 
         settings = {
             stt = {
@@ -47,11 +43,14 @@
                 sshKeys = [
                     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMH2S3ZA0agXgsNM8RWJ1JvJrfe2Bq00Zc2mQwmjhAjX karli@Karls-Surface"
                 ];
+                extraPackages = [ pkgs.elan ];
                 soul = ''
                     You are Karl's personal assistant running on his homelab.
                     Be concise.  You have no GPU of your own; heavy work goes
-                    through the model gateway.  Voice messages reach you
-                    already transcribed; answer in the language the user used.
+                    through the model gateway.  
+                    Voice messages reach you already transcribed; answer in the language the user used.
+                    You have access to a nix environment, so you can run nix commands. 
+                    You also have access to lean4 in your environment.
                 '';
             };
             joni = {
@@ -59,11 +58,15 @@
                 sshKeys = [
                     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOH8RZAPIW6QtCf47hpdpLhPVd30PtbktPPSQJ6JooPd jonbrod@laptop"
                 ];
+                extraPackages = [ pkgs.elan ];
                 soul = ''
                     You are Joni's personal assistant running on his homelab.
                     Be concise.  You have no GPU of your own; heavy work goes
-                    through the model gateway.  Voice messages reach you
-                    already transcribed; answer in the language the user used.
+                    through the model gateway.  
+                    Voice messages reach you already transcribed; answer in the language the user used.
+                    You have access to a nix environment, so you can run nix commands. 
+                    You also have access to lean4 in your environment.
+
                 '';
             };
         };

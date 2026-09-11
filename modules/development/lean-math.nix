@@ -12,11 +12,16 @@
     # for everyone; the heavy mathlib oleans are fetched from the community
     # artifact cache at first use, not compiled locally.
     #
-    # The MCP server (see modules/services/hermes/mcps.nix) points at this dir
-    # with `--lean-project-path`.  On the first Lean tool call it runs
-    # `lake clean` -> `lake exe cache get` -> `lake build` here.  Concurrent
-    # builds by two agents are guarded by lake's own file locks (the loser
-    # retries); for a two-user homelab that contention is negligible.
+    # There is deliberately no Lean MCP server (see the note in
+    # modules/services/hermes/mcps.nix).  The agents get `lean`/`lake` on PATH
+    # from elan and run them here from the shell, so nothing stays resident
+    # between calls.  Warm the oleans once by hand after the first switch:
+    #
+    #     sudo -iu karl bash -c 'cd /var/lib/lean-math \
+    #         && lake exe cache get && lake build'
+    #
+    # Concurrent builds by two agents are guarded by lake's own file locks (the
+    # loser retries); for a two-user homelab that contention is negligible.
     projectPath = config.services.lean-math.projectPath;
 
     # Must match the toolchain nixpkgs' `lean4` provides, so the community olean
@@ -46,7 +51,6 @@ in {
     };
 
     config = lib.mkMerge [
-        # Group + the shared, group-writable project dir.
         {
             users.groups."lean-math" = { };
 
@@ -68,8 +72,11 @@ in {
         }
 
         # Seed the minimal lake project once (idempotent): lean-toolchain,
-        # lakefile.toml (mathlib dep), and a demo theorem.  The MCP server does
-        # the cache-get + build later; this just lays down the source.
+        # lakefile.toml (mathlib dep), and a demo theorem.  This only lays down
+        # the source -- the cache-get + build is the manual warm-up above.
+        #
+        # Note the guard is `[ -f lakefile.toml ]`, so edits to the templates
+        # below never reach an already-seeded dir; change it there by hand.
         {
             system.activationScripts.lean-math = {
                 text = ''
