@@ -10,12 +10,13 @@
         ./users.nix
         ./secrets.nix
 
+        ../../modules/services/backup.nix
+
         ../../modules/hardware/nvidia.nix
         ../../modules/development/cuda.nix
         ../../modules/development/lean-math.nix
 
         ../../modules/services/minecraft/crafty.nix
-        ../../modules/services/backup.nix
 
         #../../modules/services/openwebui/default.nix        
         ../../modules/services/searxng/default.nix
@@ -36,22 +37,10 @@
         open = false;
     };
 
-    # Ported from the pre-flake configuration.nix; modules/hardware/networking.nix
-    # only opens 22.
-    networking.firewall.allowedTCPPorts = [
-        2000 25565 25566 25567 25568 25569
-    ];
+    services.homelab-backup = {
+        enable = true;
+        passwordFile = config.age.secrets."restic-homeserver".path;
+    };
 
     system.stateVersion = "26.05";
-
-    # --- nightly backups to the SATA disk ------------------------------------
-    # Staged: switch on together with the age.secrets block in ./secrets.nix
-    # once secrets/restic-homeserver.age exists (see the recipe there).
-    # Prerequisite on the box, once:
-    #     sudo mkfs.ext4 -L backup -m 1 /dev/sda1
-    #
-    # services.homelab-backup = {
-    #     enable = true;
-    #     passwordFile = config.age.secrets."restic-homeserver".path;
-    # };
 }
