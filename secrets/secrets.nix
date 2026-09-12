@@ -1,20 +1,3 @@
-# secrets/secrets.nix -- agenix recipient rules, DERIVED.
-#
-# This file declares no keys of its own.  Every recipient is read out of
-# hosts/homeserver/hermes_profiles.nix, so adding an agent there -- with their
-# sshKeys, as you already must -- automatically gives them a secret that only
-# they and the host can open.  One source of truth.
-#
-# NOT a NixOS module: the agenix CLI does a plain `import` of this file
-# (RULES=./secrets.nix) and reads <file>.publicKeys.  That is why we can import
-# the profile with dummy module arguments below -- Nix is lazy, so pulling out
-# `sshKeys` never forces `pkgs.elan` or anything else in there.  Verified: it
-# evaluates with pkgs = null.
-#
-# Consequence worth knowing: an agent with an empty `sshKeys` list gets a
-# secret only the host can decrypt, so nobody can edit it.  The assert below
-# turns that into a clear error instead of a confusing agenix failure.
-
 let
   # Module arguments are never forced for the attributes we read.
   profile = import ../hosts/homeserver/hermes_profiles.nix {
@@ -30,8 +13,6 @@ let
   # since that is the identity age.identityPaths points at.  It is a machine
   # fact, not an agent fact, so it lives here.
   homeserver = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHqEd/Iew4ztsH+j5G1gsL9332sccR/5Aiq8Wl3AUpt9 root@nixos";
-
-  # Admin key, for machine-level secrets that belong to no agent.
   admin = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMH2S3ZA0agXgsNM8RWJ1JvJrfe2Bq00Zc2mQwmjhAjX karli@Karls-Surface";
 
   # One rule per agent: that person's own keys, plus the host.  Deliberately
@@ -54,7 +35,7 @@ let
   # --- machine-level secrets ---------------------------------------------
   # Owned by the machine, not a person: consumed by a system service.
   machineSecrets = {
-    "tailscale-authkey.age".publicKeys = [ admin homeserver ];
+    "tailscale-homeserver.age".publicKeys = [ admin homeserver ];
   };
 in
 hermesSecrets // machineSecrets

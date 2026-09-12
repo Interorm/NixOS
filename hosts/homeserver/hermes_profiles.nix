@@ -14,7 +14,7 @@
         # below -- adding an agent creates its secret with no further wiring.
         # See modules/services/hermes/hermes.nix and secrets/README.md.
         # Machine-level secrets live in modules/services/secrets/.
-        secretsBackend = "agenix";
+        secretsBackend = "envFile";
 
         defaultModel = "Gemma4-E4B";
 

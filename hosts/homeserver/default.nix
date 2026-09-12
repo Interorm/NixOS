@@ -8,6 +8,7 @@
         ../../modules/default.nix
 
         ./users.nix
+        ./secrets.nix
 
         ../../modules/hardware/nvidia.nix
         ../../modules/development/cuda.nix
@@ -20,7 +21,6 @@
         ../../modules/services/docling.nix
         
         ../../modules/services/hermes/default.nix
-        ../../modules/services/secrets/default.nix
         ./hermes_profiles.nix
 
         ../../modules/llama.cpp/default_homeserver.nix
