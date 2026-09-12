@@ -15,16 +15,15 @@
 
         ../../modules/services/minecraft/crafty.nix
 
-        ../../modules/services/openwebui/default.nix        
+        #../../modules/services/openwebui/default.nix        
+        ../../modules/services/searxng/default.nix
+        ../../modules/services/docling.nix
+        
         ../../modules/services/hermes/default.nix
         ./hermes_profiles.nix
 
+        ../../modules/llama.cpp/default_homeserver.nix
         ./endpoints.nix
-        ../../modules/llama.cpp/model-gateway.nix
-        ../../modules/llama.cpp/llama-proxy.nix
-        ../../modules/llama.cpp/llama-coder.nix
-        ../../modules/llama.cpp/llama-chat.nix
-        ../../modules/llama.cpp/huggingface-models.nix
     ];
 
     networking.hostName = "homeserver";

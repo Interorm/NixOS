@@ -39,18 +39,6 @@
     '';
 
 in {
-
-    systemd.services.init-openwebui-net = {
-        requiredBy = [
-            "docker-searxng.service"
-            "docker-searxng-valkey.service"
-        ];
-        before = [
-            "docker-searxng.service"
-            "docker-searxng-valkey.service"
-        ];
-    };
-
     virtualisation.oci-containers.containers = {
         searxng = {
             image = "docker.io/searxng/searxng:latest";
@@ -64,22 +52,12 @@ in {
                 "${configDir}:/etc/searxng:ro"
                 "searxng-core-data:/var/cache/searxng"
             ];
-
-            extraOptions = [
-                "--network=OpenWebUI_net"
-                "--network-alias=searxng-core"
-                "--network-alias=core"
-            ];
         };
 
         searxng-valkey = {
             image = "docker.io/valkey/valkey:9-alpine";
             cmd = [ "valkey-server" "--save" "30" "1" "--loglevel" "warning" ];
             volumes = [ "searxng-valkey-data:/data" ];
-            extraOptions = [
-                "--network=OpenWebUI_net"
-                "--network-alias=valkey"
-            ];
         };
     };
 

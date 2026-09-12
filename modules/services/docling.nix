@@ -1,12 +1,6 @@
 {
     ...
 }: {
-
-    systemd.services.init-openwebui-net = {
-        requiredBy = ["docker-docling.service"];
-        before = ["docker-docling.service"];
-    };
-
     virtualisation.oci-containers.containers = {
         docling = {
             image = "quay.io/docling-project/docling-serve:latest";
@@ -27,7 +21,6 @@
             };
 
             extraOptions = [
-                "--network=OpenWebUI_net"
                 # "--gpus" "all"
                 # "--device" "nvidia.com/gpu=all"
             ];

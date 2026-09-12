@@ -18,9 +18,7 @@
         ../../modules/apps/default.nix
         ../../modules/apps/default_gaming.nix
 
-        ../../modules/llama.cpp/llama-server.nix
-        ../../modules/llama.cpp/huggingface-models.nix
-        ../../modules/llama.cpp/dnd-toggle.nix
+        ../../modules/llama.cpp/default_workstation.nix
     ];
 
     # Was `network.hostName` -- no such option path exists.

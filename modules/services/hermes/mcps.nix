@@ -8,7 +8,10 @@
     cfg = config.services.hermes-agents;
 in {
     config = lib.mkIf cfg.enable {
-        environment.systemPackages = [ pkgs.mcp-nixos ];
+        environment.systemPackages = with pkgs; [
+            mcp-nixos 
+            github-mcp-server
+        ];
 
         services.hermes-agents.mcpServers = {
             github = {
