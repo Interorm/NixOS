@@ -16,6 +16,6 @@
     # openssh is enabled, but stated explicitly because it is load-bearing: if
     # this key is ever regenerated (reinstall, new disk), every secret must be
     # rekeyed with `agenix -r` or activation fails to decrypt.
-    age.identityPaths = [ "/root/.ssh/id_ed25519" ];
+    age.identityPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
 
 }

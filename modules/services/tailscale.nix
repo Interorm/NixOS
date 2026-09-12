@@ -4,10 +4,6 @@
 }: let
     hostname = config.networking.hostName;
 
-    # The whole attribute-path segment must be one interpolation.  Writing
-    # `age.secrets.tailscale-${hostname}` is a syntax error: Nix does not allow
-    # a literal prefix glued to `${...}` in an attribute path.  Binding the
-    # complete name first and using `${secretName}` is the legal form.
     secretName = "tailscale-${hostname}";
 in {
     environment.systemPackages = [ pkgs.tailscale ];
