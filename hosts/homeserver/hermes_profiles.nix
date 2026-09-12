@@ -7,6 +7,14 @@
         users = [ "karl" "joni" ];
     };
 
+    # agenix-managed secrets. Each agent's env file is decrypted to
+    # /run/agenix/hermes-<name>, owned by that agent -- see
+    # modules/services/secrets/ and secrets/secrets.nix.
+    services.agenix-secrets = {
+        enable = true;
+        hermesAgents = [ "karl" "joni" ];
+    };
+
     services.hermes-agents = {
         enable = true;
 

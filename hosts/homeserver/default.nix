@@ -17,6 +17,7 @@
 
         ../../modules/services/openwebui/default.nix        
         ../../modules/services/hermes/default.nix
+        ../../modules/services/secrets/default.nix
         ./hermes_profiles.nix
 
         ./endpoints.nix

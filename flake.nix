@@ -10,6 +10,16 @@
     };
 
     hermes-agent.url = "github:NousResearch/hermes-agent";
+
+    # age-encrypted secrets, decrypted at activation with the host's SSH key.
+    # See secrets/secrets.nix for who can decrypt what, and
+    # modules/services/secrets/ for the host wiring.
+    agenix = {
+      url = "github:ryantm/agenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+      # Darwin deps are dead weight on a Linux-only fleet.
+      inputs.darwin.follows = "";
+    };
   };
 
   outputs = { self, nixpkgs, home-manager, ... }@inputs:
@@ -53,6 +63,8 @@
 
           modules = [
             ./hosts/homeserver/default.nix
+
+            inputs.agenix.nixosModules.default
 
             home-manager.nixosModules.home-manager
             {
