@@ -18,7 +18,7 @@
 
         defaultModel = "Gemma4-E4B";
 
-        dashboardHost = "192.168.42.2";
+        dashboardHost = "0.0.0.0";
         dependencyGroups = [ "messaging" "anthropic" ];
 
         settings = {
@@ -49,7 +49,10 @@
                 sshKeys = [
                     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMH2S3ZA0agXgsNM8RWJ1JvJrfe2Bq00Zc2mQwmjhAjX karli@Karls-Surface"
                 ];
+                apiServerPort = 9190;
+
                 extraPackages = [ pkgs.elan ];
+                googleWorkspace.enable = true;
 
                 soul = ''
                     You are Karl's personal assistant running on his homelab.
