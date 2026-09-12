@@ -4,69 +4,44 @@
     inputs,
     pkgs,
     ...
-}: let
-    cfg = config.services.agenix-secrets;
-in {
-    # agenix wiring for this host.  The upstream NixOS module (added to the
-    # host's module list in flake.nix) provides `age.secrets`; this module is
-    # the house style around it: it declares WHICH secrets exist, who owns the
-    # decrypted file, and puts the CLI on PATH so secrets can be edited on the
-    # box.
+}: {
+    # Machine-level agenix wiring.  Per-AGENT secrets are NOT here: they are
+    # derived automatically from `services.hermes-agents.agents` in
+    # modules/services/hermes/hermes.nix, so adding an agent creates its secret
+    # with no further wiring.  This module covers the rest:
     #
-    # How it works:
-    #   * secrets/*.age are encrypted blobs, committed to the repo.  Safe to
-    #     publish: only the private keys listed in secrets/secrets.nix can open
-    #     them.
-    #   * At activation the host decrypts them with its SSH *host* key
-    #     (age.identityPaths) into /run/agenix/<name> -- a tmpfs, so plaintext
-    #     never touches disk.
-    #   * `owner`/`mode` decide who can read the decrypted file.
+    #   * the agenix CLI on PATH, so secrets can be edited on the box
+    #   * the identity the host decrypts with
+    #   * secrets owned by the machine rather than by a person (Tailscale,
+    #     service credentials, ...)
     #
-    # Adding a secret is three steps: add a rule to secrets/secrets.nix, run
-    # `agenix -e secrets/<name>.age`, then declare it under `secrets` below.
+    # Adding a machine secret is three steps: add a rule to
+    # secrets/secrets.nix, run `agenix -e secrets/<name>.age`, then declare it
+    # under `age.secrets` below and consume it by `.path` (never by value).
 
-    options.services.agenix-secrets = {
-        enable = lib.mkEnableOption "agenix-managed secrets for this host";
+    environment.systemPackages = [
+        inputs.agenix.packages.${pkgs.stdenv.hostPlatform.system}.default
+    ];
 
-        hermesAgents = lib.mkOption {
-            type = lib.types.listOf lib.types.str;
-            default = [ ];
-            example = [ "karl" "joni" ];
-            description = ''
-                Hermes agents whose env file is managed by agenix.  For each
-                name N, secrets/hermes-N.age is decrypted to /run/agenix/
-                hermes-N, owned by N and readable only by them -- the same
-                shape as the hand-made ${"/etc/hermes"}/N.env it replaces.
+    # Identity the host decrypts with.  This is also agenix' default when
+    # openssh is enabled, but stated explicitly because it is load-bearing: if
+    # this key is ever regenerated (reinstall, new disk), every secret must be
+    # rekeyed with `agenix -r` or activation fails to decrypt.
+    age.identityPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
 
-                Point the agent at it with:
-                  services.hermes-agents.agents.N.environmentFile =
-                      config.age.secrets."hermes-N".path;
-            '';
-        };
-    };
-
-    config = lib.mkIf cfg.enable {
-        # The CLI, so `agenix -e secrets/foo.age` works on the box itself.
-        environment.systemPackages = [
-            inputs.agenix.packages.${pkgs.stdenv.hostPlatform.system}.default
-        ];
-
-        # Identity the host decrypts with.  This is the default when openssh is
-        # enabled, but stated explicitly: if this key is ever regenerated,
-        # every secret must be rekeyed (`agenix -r`) or activation fails.
-        age.identityPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
-
-        # One secret per Hermes agent, owned by that agent.
-        age.secrets = lib.listToAttrs (map (agent: {
-            name = "hermes-${agent}";
-            value = {
-                file = ../../../secrets/hermes-${agent}.age;
-                owner = agent;
-                group = agent;
-                # 0400: the agent's gateway reads it; nobody else, not even
-                # the other agent.
-                mode = "0400";
-            };
-        }) cfg.hermesAgents);
-    };
+    # --- machine-level secrets ---------------------------------------------
+    # Commented out until the .age file exists -- an age.secrets entry pointing
+    # at a missing file breaks the build.  Uncomment together with creating it.
+    #
+    # age.secrets.tailscale-authkey = {
+    #     file = ../../../secrets/tailscale-authkey.age;
+    #     owner = "root";
+    #     mode = "0400";
+    # };
+    #
+    # ...then consume it:
+    # services.tailscale = {
+    #     enable = true;
+    #     authKeyFile = config.age.secrets.tailscale-authkey.path;
+    # };
 }

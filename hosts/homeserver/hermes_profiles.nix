@@ -7,16 +7,14 @@
         users = [ "karl" "joni" ];
     };
 
-    # agenix-managed secrets. Each agent's env file is decrypted to
-    # /run/agenix/hermes-<name>, owned by that agent -- see
-    # modules/services/secrets/ and secrets/secrets.nix.
-    services.agenix-secrets = {
-        enable = true;
-        hermesAgents = [ "karl" "joni" ];
-    };
-
     services.hermes-agents = {
         enable = true;
+
+        # Each agent's env file is derived automatically from the `agents` set
+        # below -- adding an agent creates its secret with no further wiring.
+        # See modules/services/hermes/hermes.nix and secrets/README.md.
+        # Machine-level secrets live in modules/services/secrets/.
+        secretsBackend = "agenix";
 
         defaultModel = "Gemma4-E4B";
 
