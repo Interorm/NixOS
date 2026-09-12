@@ -22,4 +22,9 @@ in {
         enable = true;
         authKeyFile = config.age.secrets.${secretName}.path;
     };
+
+    networking.firewall = {
+        trustedInterfaces = [ "tailscale0" ];
+        allowedUDPPorts = [ config.services.tailscale.port ]
+    }
 }
