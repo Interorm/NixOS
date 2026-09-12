@@ -49,6 +49,9 @@ let
   # Owned by the machine, not a person: consumed by a system service.
   machineSecrets = {
     "tailscale-homeserver.age".publicKeys = [ admin homeserver ];
+    # restic repository password for the local SATA backup disk.  Machine
+    # secret: consumed by a root systemd unit, belongs to no agent.
+    "restic-homeserver.age".publicKeys = [ admin homeserver ];
   };
 in
 hermesSecrets // googleSecrets // machineSecrets

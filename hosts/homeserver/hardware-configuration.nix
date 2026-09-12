@@ -24,36 +24,6 @@
       options = [ "fmask=0077" "dmask=0077" ];
     };
 
-  fileSystems."/var/lib/docker/rootfs/overlayfs/46081623aeb3f49a05c8f12e4f9812522773be93b0e287508b48c1e62b1fc0ca" =
-    { device = "overlay";
-      fsType = "overlay";
-    };
-
-  fileSystems."/var/lib/docker/rootfs/overlayfs/64f496c08f4a9f0299bdb9f9f39fc2028b8a0160643713801c2aefe2a09f1994" =
-    { device = "overlay";
-      fsType = "overlay";
-    };
-
-  fileSystems."/var/lib/docker/rootfs/overlayfs/ad02cc94fb3c1dba2ca0f210427a665dc213dfad314292f0da9c7ada119a6158" =
-    { device = "overlay";
-      fsType = "overlay";
-    };
-
-  fileSystems."/var/lib/docker/rootfs/overlayfs/3d5d243e90163d8142f505876cab1da111173fa896188afdec3105212910fbee" =
-    { device = "overlay";
-      fsType = "overlay";
-    };
-
-  fileSystems."/var/lib/docker/rootfs/overlayfs/f8c26de40e4f07bc6c4d116cb93f1992628d498605ff853daaec2018d3cb9a46" =
-    { device = "overlay";
-      fsType = "overlay";
-    };
-
-  fileSystems."/var/lib/docker/rootfs/overlayfs/305c266238bbd2ca9e955c1436973aeff55e9cab8091e38f7aee76e1c3e7f8f7" =
-    { device = "overlay";
-      fsType = "overlay";
-    };
-
   swapDevices = [ ];
 
   nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
