@@ -138,8 +138,15 @@
 
             environmentFile = lib.mkOption {
                 type = lib.types.str;
-                default = "${cfg.secretsDir}/${name}.env";
-                defaultText = lib.literalExpression ''"''${config.services.hermes-agents.secretsDir}/<name>.env"'';
+                default =
+                    if cfg.secretsBackend == "agenix"
+                    then config.age.secrets."hermes-${name}".path
+                    else "${cfg.secretsDir}/${name}.env";
+                defaultText = lib.literalExpression ''
+                    if secretsBackend == "agenix"
+                    then config.age.secrets."hermes-<name>".path
+                    else "''${config.services.hermes-agents.secretsDir}/<name>.env"
+                '';
                 description = ''
                     KEY=value file with this agent's secrets.  It is NOT in the
                     repo -- anything in the flake is world-readable in
@@ -341,6 +348,31 @@ in {
             description = "Directory holding one <name>.env per agent.";
         };
 
+        secretsBackend = lib.mkOption {
+            type = lib.types.enum [ "envFile" "agenix" ];
+            default = "envFile";
+            description = ''
+                Where each agent's secrets come from.
+
+                "envFile" (default) reads ${"secretsDir"}/<name>.env, created
+                out of band by an administrator.  Simple, but plaintext on
+                disk, invisible to the repo, and lost on a rebuild from
+                scratch.
+
+                "agenix" instead declares one age-encrypted secret per agent
+                automatically -- adding an agent to `agents` creates its
+                secret with no further wiring.  Each is decrypted at
+                activation to /run/agenix/hermes-<name> (tmpfs), owned by that
+                agent and mode 0400, and `environmentFile` defaults to that
+                path.
+
+                With "agenix" you must also, per agent <name>:
+                  * add a rule to secrets/secrets.nix for "hermes-<name>.age"
+                  * create it with `agenix -e secrets/hermes-<name>.age`
+                See secrets/README.md.
+            '';
+        };
+
         dashboardHost = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
@@ -485,5 +517,22 @@ in {
         }) cfg.agents;
 
         home-manager.users = lib.mapAttrs mkHome cfg.agents;
+
+        # One age secret per agent, derived from `agents` exactly like
+        # users.users above -- so adding an agent creates its secret with no
+        # further wiring.  Decrypted at activation to /run/agenix/hermes-<name>
+        # (tmpfs), owned by that agent, 0400: nobody else can read it, not even
+        # the other agents.
+        #
+        # The .age file must exist in secrets/ and have a rule in
+        # secrets/secrets.nix; see secrets/README.md.
+        age.secrets = lib.mkIf (cfg.secretsBackend == "agenix") (
+            lib.mapAttrs' (name: _: lib.nameValuePair "hermes-${name}" {
+                file = ../../../secrets/hermes-${name}.age;
+                owner = name;
+                group = name;
+                mode = "0400";
+            }) cfg.agents
+        );
     };
 }

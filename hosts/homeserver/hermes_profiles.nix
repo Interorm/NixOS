@@ -10,6 +10,12 @@
     services.hermes-agents = {
         enable = true;
 
+        # Each agent's env file is derived automatically from the `agents` set
+        # below -- adding an agent creates its secret with no further wiring.
+        # See modules/services/hermes/hermes.nix and secrets/README.md.
+        # Machine-level secrets live in modules/services/secrets/.
+        secretsBackend = "agenix";
+
         defaultModel = "Gemma4-E4B";
 
         dashboardHost = "192.168.42.2";

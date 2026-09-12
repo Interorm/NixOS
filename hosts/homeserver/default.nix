@@ -20,6 +20,7 @@
         ../../modules/services/docling.nix
         
         ../../modules/services/hermes/default.nix
+        ../../modules/services/secrets/default.nix
         ./hermes_profiles.nix
 
         ../../modules/llama.cpp/default_homeserver.nix
