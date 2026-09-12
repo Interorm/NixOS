@@ -26,14 +26,21 @@ works unchanged on a host that hasn't migrated.
 
 ## Who can decrypt what
 
-`secrets/secrets.nix` holds the recipient rules. It is **not** part of the
-NixOS config — it only tells the `agenix` CLI which keys to encrypt to.
+**You never declare keys twice.** `secrets/secrets.nix` derives every recipient
+from `hosts/homeserver/hermes_profiles.nix` — the `sshKeys` you already set per
+agent. Adding an agent there automatically creates a rule for
+`hermes-<name>.age` encrypted to that person plus the host.
 
-| Secret | Recipients |
-|---|---|
-| `hermes-karl.age` | karl + homeserver |
-| `hermes-joni.age` | joni + homeserver |
-| `tailscale-authkey.age` | karl + homeserver |
+| Secret | Recipients | Source |
+|---|---|---|
+| `hermes-karl.age` | karl + homeserver | derived from `agents.karl.sshKeys` |
+| `hermes-joni.age` | joni + homeserver | derived from `agents.joni.sshKeys` |
+| `tailscale-authkey.age` | admin + homeserver | declared in `secrets.nix` (belongs to no agent) |
+
+`secrets.nix` is not a NixOS module — the agenix CLI plain-`import`s it
+(`RULES=./secrets.nix`). That is what lets it import the host profile with dummy
+module arguments: Nix is lazy, so reading `sshKeys` never forces `pkgs.elan` or
+anything else in that file.
 
 Each agent's secret is encrypted to **that person and the host only**. Karl is
 deliberately *not* a recipient of Joni's secret: as administrator he can always
@@ -41,9 +48,53 @@ read the decrypted file as root, but keeping him off the recipient list means
 the stored ciphertext is not his to open and the separation is visible in the
 repo.
 
+An agent with an empty `sshKeys` list would produce a secret nobody could edit,
+so `secrets.nix` turns that into an explicit error rather than a confusing
+agenix failure.
+
 **Trade-off:** if Joni loses his laptop key, his secret is unrecoverable — it
 must be recreated and the upstream credentials rotated. That is the right
 trade for individually rotatable API tokens.
+
+## Editing without a Nix machine
+
+`agenix` is a wrapper around [`age`](https://github.com/FiloSottile/age), and
+the `.age` files are plain age files — so any machine with the `age` binary can
+read and write them (`brew install age`, `winget install age`,
+`apt install age`). Verified: a file created with plain `age` decrypts with
+`agenix` and vice versa.
+
+```bash
+# read
+age -d -i ~/.ssh/id_ed25519 secrets/hermes-karl.age
+
+# edit, then re-encrypt to the SAME recipients
+age -d -i ~/.ssh/id_ed25519 secrets/hermes-karl.age > /tmp/s.env
+$EDITOR /tmp/s.env
+age -R recipients.txt -o secrets/hermes-karl.age /tmp/s.env && shred -u /tmp/s.env
+```
+
+`recipients.txt` is one public key per line, and **must** match the rule for
+that file — miss the host key and the server can no longer decrypt it. Generate
+it from the single source of truth instead of by hand:
+
+```bash
+nix-instantiate --json --eval --strict \
+  -E '(import ./secrets/secrets.nix)."hermes-karl.age".publicKeys' \
+  | jq -r '.[]' > recipients.txt
+```
+
+Where Nix *is* available (including macOS/WSL), prefer `nix run` — it reads the
+rules itself, so recipients are always correct:
+
+```bash
+nix run github:ryantm/agenix -- -e secrets/hermes-karl.age
+```
+
+Editing on the homeserver works too (`agenix` is on its PATH), but note the
+admin account there is **`homeserver`**, not `karl` — `karl` is a login-locked
+agent account with no sudo. It also means putting your private key on the box,
+which defeats keeping it on your laptop; treat it as a fallback.
 
 ---
 
