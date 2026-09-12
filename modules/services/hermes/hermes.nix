@@ -1,8 +1,30 @@
 {
-    config, options, lib, inputs,
+    config, options, lib, pkgs, inputs,
     ...
 }: let
     cfg = config.services.hermes-agents;
+
+    # Interpreter carrying the Google API client libraries.  The
+    # google-workspace skill shells out to `python` and imports google.auth /
+    # google_auth_oauthlib / googleapiclient; on NixOS there is no pip install
+    # into a read-only store, so the interpreter has to carry them.  All three
+    # are prebuilt in nixpkgs -- a download, not a compile.
+    googlePython = pkgs.python3.withPackages (ps: with ps; [
+        google-auth
+        google-auth-oauthlib
+        google-api-python-client
+    ]);
+
+    # Where an agent's Google OAuth *client secret* comes from.  Mirrors
+    # environmentFile: agenix when that backend is on, a plain path otherwise.
+    # NOTE this is the client secret (downloaded from Cloud Console), not the
+    # OAuth token -- the token is minted by the consent flow on the machine and
+    # lives in ~/.hermes/google_token.json, which no deployment system can
+    # pre-seed.
+    googleClientSecretPath = name:
+        if cfg.secretsBackend == "agenix"
+        then config.age.secrets."google-${name}".path
+        else "${cfg.secretsDir}/google-${name}.json";
 
     # Hermes' own NixOS module (`services.hermes-agent`) is a singleton: one
     # `enable`, one user, one stateDir.  It cannot give you an agent per
@@ -62,7 +84,8 @@
             };
 
             extraDependencyGroups = cfg.dependencyGroups;
-            extraPackages = agent.extraPackages;
+            extraPackages = agent.extraPackages
+                ++ lib.optional agent.googleWorkspace.enable googlePython;
 
             # Fleet-wide servers first, per-agent second.  `//` is a shallow
             # merge: a per-agent server with the same name replaces the
@@ -191,6 +214,60 @@
                 default = [];
                 example = lib.literalExpression "[ pkgs.pandoc pkgs.jq ]";
                 description = "Tools the agent may call from its terminal.";
+            };
+
+            googleWorkspace = {
+                enable = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = ''
+                        Give this agent the Google Workspace toolchain: Gmail,
+                        Calendar, Drive, Docs, Sheets and Contacts over OAuth,
+                        via the `google-workspace` skill.
+
+                        Adds a python3 carrying google-auth,
+                        google-auth-oauthlib and google-api-python-client to
+                        the agent's PATH (the skill imports them; NixOS cannot
+                        pip install into a read-only store).
+
+                        Credentials are NOT deployed by this option, and two
+                        different things are involved:
+
+                          * the OAuth *client secret* (downloaded from Google
+                            Cloud Console).  Set `clientSecretFile`, or leave
+                            it at its default, which follows `secretsBackend`
+                            exactly like `environmentFile` does:
+                              agenix  -> /run/agenix/google-<name>
+                              envFile -> ''${secretsDir}/google-<name>.json
+
+                          * the OAuth *token*, minted by the consent flow ON
+                            the machine and written to
+                            ~/.hermes/google_token.json (0600).  It contains a
+                            long-lived refresh token, is per-account, and
+                            refreshes itself -- no deployment system can
+                            pre-seed it.  Expect one interactive setup per
+                            agent:
+                              sudo -iu <name> python \
+                                ~/.hermes/skills/productivity/google-workspace/scripts/setup.py \
+                                --client-secret <clientSecretFile>
+                    '';
+                };
+
+                clientSecretFile = lib.mkOption {
+                    type = lib.types.str;
+                    default = googleClientSecretPath name;
+                    defaultText = lib.literalExpression ''
+                        if secretsBackend == "agenix"
+                        then config.age.secrets."google-<name>".path
+                        else "''${secretsDir}/google-<name>.json"
+                    '';
+                    description = ''
+                        Path to this agent's Google OAuth client secret JSON.
+                        Passed to the skill's setup script; never read by Nix,
+                        so the file only has to exist when you run the OAuth
+                        flow -- not at build time.
+                    '';
+                };
             };
 
             extraGroups = lib.mkOption {
@@ -524,15 +601,26 @@ in {
         # (tmpfs), owned by that agent, 0400: nobody else can read it, not even
         # the other agents.
         #
-        # The .age file must exist in secrets/ and have a rule in
+        # Agents with googleWorkspace.enable also get google-<name>, holding
+        # their OAuth *client secret* JSON.  (The OAuth token is minted on the
+        # machine by the consent flow and lives in ~/.hermes -- not here.)
+        #
+        # The .age files must exist in secrets/ and have rules in
         # secrets/secrets.nix; see secrets/README.md.
         age.secrets = lib.mkIf (cfg.secretsBackend == "agenix") (
-            lib.mapAttrs' (name: _: lib.nameValuePair "hermes-${name}" {
+            (lib.mapAttrs' (name: _: lib.nameValuePair "hermes-${name}" {
                 file = ../../../secrets/hermes-${name}.age;
                 owner = name;
                 group = name;
                 mode = "0400";
-            }) cfg.agents
+            }) cfg.agents)
+            //
+            (lib.mapAttrs' (name: _: lib.nameValuePair "google-${name}" {
+                file = ../../../secrets/google-${name}.age;
+                owner = name;
+                group = name;
+                mode = "0400";
+            }) (lib.filterAttrs (_: a: a.googleWorkspace.enable) cfg.agents))
         );
     };
 }

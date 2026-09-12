@@ -32,10 +32,23 @@ let
     value = agentRules.${name};
   }) (builtins.attrNames agentRules));
 
+  # Agents with googleWorkspace.enable additionally get google-<name>.age,
+  # holding their OAuth client secret JSON.  Derived from the same profile, so
+  # enabling the option in hermes_profiles.nix is the only edit needed -- the
+  # rule appears here on its own.
+  googleAgents = builtins.filter
+    (name: (agents.${name}.googleWorkspace or { }).enable or false)
+    (builtins.attrNames agents);
+
+  googleSecrets = builtins.listToAttrs (map (name: {
+    name = "google-${name}.age";
+    value = agentRules.${name};
+  }) googleAgents);
+
   # --- machine-level secrets ---------------------------------------------
   # Owned by the machine, not a person: consumed by a system service.
   machineSecrets = {
     "tailscale-homeserver.age".publicKeys = [ admin homeserver ];
   };
 in
-hermesSecrets // machineSecrets
+hermesSecrets // googleSecrets // machineSecrets

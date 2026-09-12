@@ -50,6 +50,12 @@
                     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMH2S3ZA0agXgsNM8RWJ1JvJrfe2Bq00Zc2mQwmjhAjX karli@Karls-Surface"
                 ];
                 extraPackages = [ pkgs.elan ];
+
+                # Gmail/Calendar/Drive/Docs/Sheets over OAuth.  Adds the Google
+                # API python libraries to this agent's PATH; the client secret
+                # path follows secretsBackend automatically (see hermes.nix).
+                googleWorkspace.enable = true;
+
                 soul = ''
                     You are Karl's personal assistant running on his homelab.
                     Be concise.  You have no GPU of your own; heavy work goes
@@ -65,6 +71,9 @@
                     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOH8RZAPIW6QtCf47hpdpLhPVd30PtbktPPSQJ6JooPd jonbrod@laptop"
                 ];
                 extraPackages = [ pkgs.elan ];
+
+                googleWorkspace.enable = true;
+
                 soul = ''
                     You are Joni's personal assistant running on his homelab.
                     Be concise.  You have no GPU of your own; heavy work goes
