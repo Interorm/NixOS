@@ -81,6 +81,7 @@ in {
                 "--ctx-size" "100000"
                 "--ctx-checkpoints" "4"
                 "--cache-type-k" "q8_0"
+                "--kv-unified"
                 "--spec-type" "draft-mtp"
                 "--spec-draft-n-max" "4"
                 "--flash-attn" "off"

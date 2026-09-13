@@ -64,7 +64,7 @@ in {
 
                 extraPackages = with pkgs; [ 
                     elan 
-                    uv python314 
+                    uv
                     nodejs
                     ripgrep
                 ];
