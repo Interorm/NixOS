@@ -62,16 +62,19 @@ in {
                 ];
                 apiServerPort = 9190;
 
-                extraPackages = [ pkgs.elan ];
+                extraPackages = with pkgs; [ 
+                    elan 
+                    uv python314 
+                    npm nodejs
+                    ripgrep
+                ];
                 googleWorkspace.enable = true;
 
                 soul = ''
-                    You are Karl's personal assistant running on his homelab.
-                    Be concise.  You have no GPU of your own; heavy work goes
-                    through the model gateway.  
-                    Voice messages reach you already transcribed; answer in the language the user used.
-                    You have access to a nix environment, so you can run nix commands. 
-                    You also have access to lean4 in your environment.
+                    You are Karl's personal assistant running on his homelab. Be concise but thorough.  
+                    ALWAYS use MCPs if they seem relevant, prefer MCPs over own scripts or knowledge.
+                    You have access to a nix environment, so you can run nix commands. Reference the NixOS mcp for documentation whenever there is a Nix-adjacent task.
+                    The following packages are avaible: python314, uv, npm, nodejs, elan (lean4), aswell as standard read/write utilities.
                 '';
             };
             joni = {
@@ -81,7 +84,7 @@ in {
                 sshKeys = [
                     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOH8RZAPIW6QtCf47hpdpLhPVd30PtbktPPSQJ6JooPd jonbrod@laptop"
                 ];
-                extraPackages = [ pkgs.elan ];
+                extraPackages = with pkgs; [ elan ];
 
                 soul = ''
                     You are Joni's personal assistant running on his homelab.
