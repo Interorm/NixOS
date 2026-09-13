@@ -1,5 +1,7 @@
 {
     pkgs,
+    lib,
+    config,
     ...
 }: let
 
@@ -20,7 +22,13 @@
     # consumes it runs on this same host.  Nothing else needs to reach it, and
     # the stack is deliberately unauthenticated (USE_DB_AUTHENTICATION=false),
     # so it must not be on a port other machines can dial.
-    apiPort = 3030;
+    #
+    # Exposed as a read-only option so the MCP entry in mcps.nix derives its
+    # FIRECRAWL_API_URL from this one value.  Writing the port in both files
+    # is how they silently drift apart: the container moves, the MCP keeps
+    # dialling the old port, and the agents lose firecrawl with no error at
+    # build time.
+    apiPort = config.services.firecrawl.port;
 
     network = "firecrawl_net";
 
@@ -40,6 +48,20 @@
     };
 
 in {
+
+    # The port is an option rather than a plain let-binding purely so that
+    # mcps.nix can read it; nothing is expected to set it.
+    options.services.firecrawl.port = lib.mkOption {
+        type = lib.types.port;
+        default = 3030;
+        readOnly = true;
+        description = ''
+            Loopback port the self-hosted Firecrawl API listens on.  Read by
+            the firecrawl MCP server entry so both always agree.
+        '';
+    };
+
+    config = {
 
     # oci-containers has no notion of compose's implicit per-project network,
     # so the bridge is created explicitly.  Container-to-container DNS
@@ -135,8 +157,6 @@ in {
                 # The API forks a worker per queue and each opens its own
                 # sockets; the stock 1024 limit is exhausted under a crawl.
                 "--ulimit=nofile=65535:65535"
-                "--log-opt=max-size=10m"
-                "--log-opt=max-file=3"
             ];
         };
 
@@ -161,8 +181,6 @@ in {
                 # Chromium's profile cache, kept off the container's writable
                 # layer so a long crawl cannot fill the docker data root.
                 "--tmpfs=/tmp/.cache:noexec,nosuid,size=512m"
-                "--log-opt=max-size=10m"
-                "--log-opt=max-file=3"
             ];
         };
 
@@ -172,8 +190,6 @@ in {
             extraOptions = [
                 "--network=${network}"
                 "--memory=256m"
-                "--log-opt=max-size=5m"
-                "--log-opt=max-file=2"
             ];
         };
 
@@ -186,8 +202,6 @@ in {
                 # watermark is 40% of this, and below it the broker raises a
                 # memory alarm at boot and blocks every publisher.
                 "--memory=512m"
-                "--log-opt=max-size=5m"
-                "--log-opt=max-file=2"
             ];
         };
 
@@ -203,9 +217,8 @@ in {
             extraOptions = [
                 "--network=${network}"
                 "--memory=512m"
-                "--log-opt=max-size=10m"
-                "--log-opt=max-file=3"
             ];
         };
+    };
     };
 }
