@@ -20,6 +20,7 @@
 
         #../../modules/services/openwebui/default.nix        
         ../../modules/services/searxng/default.nix
+        ../../modules/services/firecrawl/default.nix
         ../../modules/services/docling.nix
         ../../modules/services/tailscale.nix
         
