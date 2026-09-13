@@ -11,6 +11,7 @@ in {
         environment.systemPackages = with pkgs; [
             mcp-nixos 
             github-mcp-server
+            firecrawl-mcp
         ];
 
         services.hermes-agents.mcpServers = {
@@ -22,6 +23,17 @@ in {
 
             nixos = {
                 command = "${pkgs.mcp-nixos}/bin/mcp-nixos";
+            };
+
+            # Scrape / crawl / map / extract against the self-hosted Firecrawl
+            # on this host (modules/services/firecrawl).  FIRECRAWL_API_URL is
+            # what makes it self-hosted: without it the server defaults to the
+            # cloud API and demands a key.  That instance runs with
+            # USE_DB_AUTHENTICATION=false, so no API key is set here -- the
+            # MCP server treats the key as optional once the URL is present.
+            firecrawl = {
+                command = "${pkgs.firecrawl-mcp}/bin/firecrawl-mcp";
+                env.FIRECRAWL_API_URL = "http://127.0.0.1:3002";
             };
 
             # Up-to-date, version-specific library docs + code examples.
