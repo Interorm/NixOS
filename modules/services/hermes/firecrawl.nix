@@ -20,7 +20,7 @@
     # consumes it runs on this same host.  Nothing else needs to reach it, and
     # the stack is deliberately unauthenticated (USE_DB_AUTHENTICATION=false),
     # so it must not be on a port other machines can dial.
-    apiPort = 3002;
+    apiPort = 3030;
 
     network = "firecrawl_net";
 

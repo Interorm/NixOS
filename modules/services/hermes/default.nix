@@ -5,5 +5,6 @@
         ./hermes.nix
         ./speaches.nix
         ./mcps.nix
+        ./firecrawl.nix
     ];
 }

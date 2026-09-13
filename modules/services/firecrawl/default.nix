@@ -1,7 +1,0 @@
-{
-   ...
-}: {
-   imports = [
-      ./firecrawl.nix
-   ];
-}

@@ -1,27 +1,34 @@
 {
     pkgs, config,
     ...
-}: {
+}: let
+    
+   enable_docling = true;
+
+in {
     services.lean-math = {
         enable = true;
         users = [ "karl" "joni" ];
     };
 
+    services.docling = {
+        enable = enable_docling;
+        gpu = "0";
+        memoryFraction = "0.24";
+    };
+
+
     services.hermes-agents = {
         enable = true;
-
-        secretsBackend = "agenix";
 
         defaultModel = "Gemma4-E4B";
 
         dashboardHost = "0.0.0.0";
         dependencyGroups = [ "messaging" "anthropic" ];
 
-        # Every agent's read_file sends PDFs to docling instead of the built-in
-        # text-layer extractor.  One switch for the whole fleet -- see the
-        # option's description for why this is not per-agent.  `url` derives
-        # itself from services.docling.port, so the port stays declared once.
-        doclingPdfHook.enable = true;
+
+        secretsBackend = "agenix";
+        doclingPdfHook.enable = enable_docling;
 
         settings = {
             stt = {
