@@ -46,6 +46,12 @@
         agents = {
             karl = {
                 dashboard.port = 9090;
+
+                # Serve the mobile PWA on 9090 instead of the desktop-shaped
+                # stock UI: this dashboard is reached from a phone over
+                # Tailscale, where the stock renderer's keyboard handling
+                # makes the composer unusable.  joni keeps the stock UI.
+                mobile.enable = true;
                 sshKeys = [
                     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMH2S3ZA0agXgsNM8RWJ1JvJrfe2Bq00Zc2mQwmjhAjX karli@Karls-Surface"
                 ];

@@ -26,6 +26,16 @@
         then config.age.secrets."google-${name}".path
         else "${cfg.secretsDir}/google-${name}.json";
 
+    # The Hermes Desktop renderer rebuilt as a mobile PWA, and the agent
+    # package with its web_dist pointed at it.  Evaluated lazily: an agent
+    # that never sets `mobile.enable` never forces this, so the npm build is
+    # only in the closure of a host that actually asked for it.
+    hermesMobile = import ./hermes-mobile.nix {
+        inherit lib pkgs;
+        hermesUpstream = inputs.hermes-agent.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        inherit (cfg.mobile) rev hash;
+    };
+
     # Hermes' own NixOS module (`services.hermes-agent`) is a singleton: one
     # `enable`, one user, one stateDir.  It cannot give you an agent per
     # person.  Its Home Manager module can, because Home Manager is already
@@ -58,6 +68,12 @@
         services.hermes-agent = {
             enable = true;
             gateway.enable = true;
+
+            # The stock renderer, or the mobile PWA when this agent asked for
+            # it.  Everything else about the package is identical either way --
+            # same venv, same skills, same gateway -- so the agent's state and
+            # behaviour do not depend on which UI it serves.
+            package = lib.mkIf agent.mobile.enable hermesMobile.package;
 
             # Merged into ~/.hermes/.env at activation.  The activation unit
             # runs as the user, so the file must be readable by them -- see
@@ -295,6 +311,32 @@
                 '';
             };
 
+            mobile.enable = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = ''
+                    Serve the mobile PWA renderer (sremes/hermes-mobile)
+                    instead of the stock dashboard UI on this agent's
+                    dashboard port.
+
+                    The stock renderer is the desktop layout: it assumes a
+                    mouse and a wide window, and on a phone the on-screen
+                    keyboard covers the composer.  The PWA is the same
+                    renderer with a mobile layout and
+                    `interactive-widget=resizes-content`, so the composer
+                    moves with the keyboard instead of hiding behind it, and
+                    it installs to the home screen from the browser's
+                    "Add to Home screen".
+
+                    This changes only which files the dashboard serves.  The
+                    gateway, state.db, skills and memory are untouched, and
+                    the PWA is a thin client of the same backend -- it ships
+                    no agent of its own.  Off leaves the agent byte-identical
+                    to an unpatched build, so flipping it back and rebuilding
+                    is a complete rollback.
+                '';
+            };
+
             dashboard = {
                 enable = lib.mkOption {
                     type = lib.types.bool;
@@ -488,6 +530,32 @@ in {
                 Nix the store is read-only, so a missing extra cannot be pip
                 installed later.  Shared by all agents so there is one build.
             '';
+        };
+
+        mobile = {
+            rev = lib.mkOption {
+                type = lib.types.str;
+                default = "864514961e57a83ebe4684a480279be35534e8f1";
+                description = ''
+                    sremes/hermes-mobile commit the PWA is built from, for
+                    agents with `mobile.enable`.
+
+                    Pinned to a commit, never a branch: this is a fork of the
+                    Hermes Desktop renderer, so it speaks the /api contract of
+                    a particular hermes-agent version.  Bump it in the same PR
+                    that bumps the hermes-agent flake input, or a newer
+                    backend can end up paired with an older renderer.
+                '';
+            };
+
+            hash = lib.mkOption {
+                type = lib.types.str;
+                default = "sha256-DVXku5yg5iK/FtXQ0k3bRFy1NpZxR6cb1H0wEzBrXLw=";
+                description = ''
+                    SRI hash of the source tree for `mobile.rev`.  Obtain with
+                    `nix flake prefetch --json github:sremes/hermes-mobile/<rev>`.
+                '';
+            };
         };
 
         mcpServers = lib.mkOption {
