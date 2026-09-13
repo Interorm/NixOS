@@ -65,7 +65,7 @@ in {
                 extraPackages = with pkgs; [ 
                     elan 
                     uv python314 
-                    npm nodejs
+                    nodejs
                     ripgrep
                 ];
                 googleWorkspace.enable = true;
