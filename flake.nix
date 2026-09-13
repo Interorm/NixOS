@@ -9,7 +9,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    hermes-agent.url = "github:NousResearch/hermes-agent";
+    # Pinned to a release tag, not `main`: an unpinned input silently drifts
+    # to whatever landed upstream on the next `nix flake update`, which for an
+    # agent holding live sessions in state.db is not a change you want to make
+    # by accident.  v2026.9.11 = 0.21.2, the state.db reliability patch.
+    hermes-agent.url = "github:NousResearch/hermes-agent/v2026.9.11";
 
     # age-encrypted secrets, decrypted at activation with the host's SSH key.
     # See secrets/secrets.nix for who can decrypt what, and
