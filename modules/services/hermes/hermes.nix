@@ -120,6 +120,14 @@
                 # docker containers reach the host via the bridge IP, which
                 # a 127.0.0.1 bind would refuse too.  Auth is the bearer key.
                 API_SERVER_HOST = "0.0.0.0";
+                # Pin the model id to "hermes-<name>" so that multiple agents
+                # on the same host each expose a unique id through the model
+                # gateway.  Without this every agent reports "hermes-agent" and
+                # the gateway silently serves only one of them (the higher-
+                # priority collision winner).  Clients send model="hermes-karl"
+                # or model="hermes-joni"; the gateway strips no prefix because
+                # the id is already unique.
+                API_SERVER_MODEL_NAME = "hermes-${name}";
             } // lib.optionalAttrs agent.dashboard.enable {
                 # The dashboard's auth gate (on for any non-loopback bind)
                 # takes username/password from .env.  The username is not a
@@ -454,7 +462,16 @@
                     0.0.0.0:<port> (firewall opened) so any OpenAI-speaking
                     client -- a terminal chat tool on another machine, or
                     OpenWebUI -- can talk to the agent at
-                    http://homeserver:<port>/v1 with model "hermes-agent".
+                    http://homeserver:<port>/v1 with model "hermes-<name>".
+
+                    The model id is fixed to "hermes-<name>" (e.g.
+                    "hermes-karl") via API_SERVER_MODEL_NAME so that multiple
+                    agents can coexist in the model gateway without colliding.
+
+                    When services.model-gateway is enabled the API server is
+                    automatically registered as a gateway endpoint, so clients
+                    can reach every agent through the single gateway port
+                    instead of each agent's individual port.
 
                     Requires API_SERVER_KEY=<random> in the agent's env file;
                     generate one with `openssl rand -hex 32`.  Clients send it
@@ -799,6 +816,35 @@ in {
         }) cfg.agents;
 
         home-manager.users = lib.mapAttrs mkHome cfg.agents;
+
+        # Auto-register each agent's API server as a model-gateway endpoint.
+        #
+        # The `options ?` guard keeps this module evaluable on hosts that do
+        # not import model-gateway.nix -- the endpoints option is declared
+        # unconditionally in that module, but the guard avoids an "undefined
+        # option" error when the module is absent.
+        #
+        # Each agent gets its own named endpoint ("hermes-<name>") and the
+        # gateway probes /v1/models to discover the model id, which Hermes
+        # reports as "hermes-<name>" (see API_SERVER_MODEL_NAME above).  No
+        # prefix is needed: the ids are already unique.
+        #
+        # Auth is enforced by Hermes itself (API_SERVER_KEY bearer check), not
+        # the gateway -- the gateway forwards the Authorization header
+        # unchanged, exactly as it does for every other request.  Local models
+        # that ignore the header are unaffected.
+        services.model-gateway.endpoints = lib.mkIf (options.services ? model-gateway) (
+            lib.mapAttrs' (name: agent:
+                lib.nameValuePair "hermes-${name}" {
+                    url = "http://127.0.0.1:${toString agent.apiServerPort}";
+                    discovery = "probe";
+                    # Lower priority than local llama.cpp servers (100) so a
+                    # name collision (unlikely -- Hermes uses "hermes-<name>")
+                    # is won by the inference server, not the agent.
+                    priority = 50;
+                }
+            ) (lib.filterAttrs (_: a: a.apiServerPort != null) cfg.agents)
+        );
 
         # One age secret per agent, derived from `agents` exactly like
         # users.users above -- so adding an agent creates its secret with no
