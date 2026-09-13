@@ -26,6 +26,35 @@
         then config.age.secrets."google-${name}".path
         else "${cfg.secretsDir}/google-${name}.json";
 
+    # The PDF -> docling hook, with its URL and timeout baked in.  A hook is
+    # spawned by Hermes as a bare subprocess with no shell profile, so
+    # everything it needs -- jq, curl, and the two settings -- has to be
+    # closed over here rather than read from the environment.
+    doclingHook = pkgs.writeShellApplication {
+        name = "hermes-docling-pdf-hook";
+        runtimeInputs = with pkgs; [ jq curl coreutils ];
+        text = ''
+            export DOCLING_URL=${lib.escapeShellArg cfg.doclingPdfHook.url}
+            export DOCLING_TIMEOUT=${toString cfg.doclingPdfHook.timeout}
+        '' + builtins.readFile ./docling-pdf-hook.sh;
+    };
+
+    doclingHookCommand = "${doclingHook}/bin/hermes-docling-pdf-hook";
+
+    # Shell hooks need consent per (event, command) pair, and a gateway has no
+    # TTY to ask on -- an unapproved hook is silently skipped, which for this
+    # hook means PDFs quietly go back to the text-layer extractor.  The
+    # alternative escape hatch, `hooks_auto_accept`, would pre-approve every
+    # hook anyone ever adds; this approves exactly one store path instead, and
+    # a rebuild that changes the script changes the path and so requires a new
+    # approval.  Hermes still owns the file at runtime (0600, its own writes
+    # are preserved between activations).
+    doclingAllowlist = builtins.toJSON {
+        approvals = [
+            { event = "pre_tool_call"; command = doclingHookCommand; }
+        ];
+    };
+
     # The Hermes Desktop renderer rebuilt as a mobile PWA, and the agent
     # package with its web_dist pointed at it.  Evaluated lazily: an agent
     # that never sets `mobile.enable` never forces this, so the npm build is
@@ -115,19 +144,46 @@
             #
             # Three layers, each deep-merged over the last: the module's
             # defaults, the fleet-wide `settings`, the agent's own.
-            settings = lib.recursiveUpdate (lib.recursiveUpdate {
+            settings = lib.recursiveUpdate (lib.recursiveUpdate ({
                 model = {
                     provider = "custom";
                     base_url = cfg.modelBaseUrl;
                     default = agent.model;
                     api_key = "\${OPENAI_API_KEY}";
                 };
-            } cfg.settings) agent.settings;
+            } // lib.optionalAttrs cfg.doclingPdfHook.enable {
+                # Fleet-wide, not per-agent: "every PDF goes through docling"
+                # is a property of the host's document pipeline, so it is one
+                # switch for everyone rather than a flag each agent can forget.
+                #
+                # pre_tool_call is the only hook that can rewrite arguments
+                # before dispatch, which is what makes this an interception
+                # rather than a suggestion -- read_file is handed a Markdown
+                # path and never opens the PDF.  A skill cannot do this: it
+                # would only advise the model, and advice is skipped.
+                hooks.pre_tool_call = [{
+                    matcher = "read_file";
+                    command = doclingHookCommand;
+                    timeout = cfg.doclingPdfHook.timeout + 10;
+                    # A crashed or missing converter must not silently fall
+                    # back to the text-layer extractor: that is the exact
+                    # failure this hook exists to prevent, and it is invisible
+                    # in the output.  Blocking makes the agent say so.
+                    fail_closed = true;
+                }];
+            }) cfg.settings) agent.settings;
 
             # SOUL.md is only honoured from HERMES_HOME, not from the
             # workspace -- hence hermesHomeFiles and not `documents`.
             hermesHomeFiles = lib.optionalAttrs (agent.soul != null) {
                 "SOUL.md" = agent.soul;
+            } // lib.optionalAttrs cfg.doclingPdfHook.enable {
+                # Pre-approves the hook so the gateway, which has no TTY to
+                # prompt on, actually registers it.  Written declaratively
+                # because a hook that is merely configured and never approved
+                # is silently inactive -- the worst outcome here, since it
+                # looks enabled in config.yaml.
+                "shell-hooks-allowlist.json" = doclingAllowlist;
             };
 
             # `hermes dashboard` is a superset of `hermes serve`: the /api/ws
@@ -597,6 +653,79 @@ in {
             '';
         };
 
+        doclingPdfHook = {
+            enable = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = ''
+                    Force every PDF that any agent's `read_file` touches
+                    through docling-serve, instead of Hermes' built-in
+                    extractor.
+
+                    Fleet-wide on purpose, and deliberately not a per-agent
+                    option: it describes how this HOST converts documents, the
+                    same way `modelBaseUrl` describes where inference happens.
+                    Per-agent would mean one agent silently reading worse text
+                    than another from the same file.
+
+                    Mechanism: a `pre_tool_call` shell hook matched on
+                    `read_file`.  The hook converts the PDF, caches the
+                    Markdown under ~/.hermes/cache/docling/<sha256>.md, and
+                    rewrites the tool's `path` argument to point at it, so
+                    read_file is never handed the PDF.  This covers uploads and
+                    agent-downloaded files alike, because both are just files
+                    on disk by the time read_file runs.
+
+                    Why not a skill: a skill is advice to the model, which it
+                    can skip, compact away, or apply inconsistently across
+                    agents.  This is in the dispatch path.  Keep a skill for
+                    the judgement calls (chunking, table handling); use this
+                    for the guarantee.
+
+                    Not covered: PDF *URLs* handed to web_extract, which never
+                    become local files -- a separate path, and not intercepted
+                    here.
+
+                    Requires a reachable docling at `url`.  It fails closed:
+                    if docling is down the read is blocked with an explanatory
+                    message rather than silently falling back to the
+                    text-layer extractor, which would hand the agent worse
+                    text with no indication the good path was skipped.
+                '';
+            };
+
+            url = lib.mkOption {
+                type = lib.types.str;
+                default =
+                    if options.services ? docling
+                    then "http://127.0.0.1:${toString config.services.docling.port}"
+                    else "http://127.0.0.1:3070";
+                defaultText = lib.literalExpression ''"http://127.0.0.1:''${toString config.services.docling.port}"'';
+                description = ''
+                    docling-serve base URL, no trailing slash.  Derived from
+                    services.docling.port when this host runs one, so the port
+                    is declared once; the `options ?` guard keeps the module
+                    evaluable on a host that does not import docling.nix and
+                    points at a remote instance instead.
+                '';
+            };
+
+            timeout = lib.mkOption {
+                type = lib.types.int;
+                default = 120;
+                description = ''
+                    Seconds the hook waits for a conversion.  The hook's own
+                    Hermes-side timeout is this plus a 10s margin, so curl
+                    gives up first and the agent gets docling's error rather
+                    than an opaque "hook timed out".
+
+                    120 suits GPU conversion of ordinary documents.  A
+                    scanned hundred-page scan on CPU can exceed it; raise it
+                    rather than letting the tool call block.
+                '';
+            };
+        };
+
         agents = lib.mkOption {
             type = lib.types.attrsOf agentSubmodule;
             default = {};
@@ -633,6 +762,14 @@ in {
                 # 127.0.0.1 -- reachable from nowhere, with no error.
                 assertion = dashPorts == [] || cfg.dashboardHost != null || cfg.dashboardInterface != null;
                 message = "services.hermes-agents: an agent has dashboard.enable but neither dashboardHost nor dashboardInterface is set.";
+            }
+            {
+                # The hook fails closed, so pointing it at nothing would turn
+                # every PDF read into a blocked tool call.  Catch the typo at
+                # eval time instead.
+                assertion = !cfg.doclingPdfHook.enable
+                    || (cfg.doclingPdfHook.url != "" && !lib.hasSuffix "/" cfg.doclingPdfHook.url);
+                message = "services.hermes-agents.doclingPdfHook.url must be non-empty and have no trailing slash.";
             }
         ];
 

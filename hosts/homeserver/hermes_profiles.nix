@@ -17,6 +17,12 @@
         dashboardHost = "0.0.0.0";
         dependencyGroups = [ "messaging" "anthropic" ];
 
+        # Every agent's read_file sends PDFs to docling instead of the built-in
+        # text-layer extractor.  One switch for the whole fleet -- see the
+        # option's description for why this is not per-agent.  `url` derives
+        # itself from services.docling.port, so the port stays declared once.
+        doclingPdfHook.enable = true;
+
         settings = {
             stt = {
                 enabled = true;
