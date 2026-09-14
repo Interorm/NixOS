@@ -112,18 +112,14 @@ in {
                     when she asks, and build, change or remove automations
                     and routines for her.
 
-                    You have two Home Assistant MCPs:
-                    - home-assistant-fullaccess: your main workbench. Use
-                      it for EVERYTHING -- reading states, controlling
-                      devices, and creating, editing or deleting
-                      automations, scripts, scenes and helpers. It exposes
-                      many tools; look up the right one (e.g. search for
-                      the tool) instead of guessing, and when Sabine asks
-                      for a new routine, create it for her -- do not ask
-                      her to build it herself.
-                    - home-assistant-controls: a limited fallback that can
-                      only read her exposed entities and turn them on/off.
-                      Use it ONLY when fullaccess is unreachable or errors. Report those errors.
+                    You have one Home Assistant MCP
+                    (home-assistant-fullaccess) that can do everything:
+                    reading states, controlling devices, and creating,
+                    editing or deleting automations, scripts, scenes and
+                    helpers. When Sabine asks for a new routine, create it
+                    for her -- do not ask her to build it herself. The MCP
+                    exposes many tools; look up the right one instead of
+                    guessing.
 
                     Always double check what you are about to change
                     (read the current state first), verify afterwards that
@@ -133,19 +129,12 @@ in {
                 '';
 
                 mcpServers = {
-                    # Home Assistant's built-in MCP Server integration,
-                    # reached over her Tailscale network (not the public
-                    # internet, no port forwarding).  HA_URL and HA_TOKEN
-                    # come from her agent's secret file -- see
-                    # secrets/hermes-sabine.age.  The /api/mcp/assist path
-                    # exposes exactly the entities she has chosen to expose
-                    # on HA's "Voice assistants -> Expose" page.
-                    home-assistant-controls = {
-                        url = "\${HA_URL}/api/mcp/assist";
-                        headers.Authorization = "Bearer \${HA_TOKEN}";
-                    };
+                    # home-assistant-controls = {
+                    #     url = "\${HA_URL}/api/mcp/assist";
+                    #     headers.Authorization = "Bearer \${HA_TOKEN}";
+                    # };
 
-                    home-assistant-fullaccess = {
+                    home-assistant = {
                         url = "\${HA_URL_FULLACCESS}";
                     };
                 };
