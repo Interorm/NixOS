@@ -96,6 +96,47 @@ in {
 
                 '';
             };
+
+            # Sabine (Karl's mother): Home Assistant control/status only, for
+            # now.  No SSH login key of her own yet -- she has no keypair, so
+            # this account is intentionally login-locked (sshKeys stays
+            # empty) and her agenix secret is encrypted to Karl's key
+            # instead of her own (see secrets/secrets.nix override).  She
+            # reaches the agent purely through the dashboard/PWA over
+            # Tailscale; Karl manages the account and its secret on her
+            # behalf until she has her own SSH key, at which point add it
+            # here and re-key her secret to her instead.
+            sabine = {
+                dashboard.port = 9070;
+                mobile.enable = true;
+
+                sshKeys = [ ];
+
+                soul = ''
+                    You are Sabine's personal assistant. Be warm, simple and
+                    patient -- explain things in plain language, avoid
+                    jargon, and confirm before taking any action.
+                    Right now your only job is Home Assistant: report the
+                    state of her smart home devices and control them
+                    (lights, heating, locks, etc.) when she asks.
+                    Always double check what you are about to change before
+                    doing it, and tell her plainly what happened afterwards.
+                '';
+
+                mcpServers = {
+                    # Home Assistant's built-in MCP Server integration,
+                    # reached over her Tailscale network (not the public
+                    # internet, no port forwarding).  HA_URL and HA_TOKEN
+                    # come from her agent's secret file -- see
+                    # secrets/hermes-sabine.age.  The /api/mcp/assist path
+                    # exposes exactly the entities she has chosen to expose
+                    # on HA's "Voice assistants -> Expose" page.
+                    home-assistant = {
+                        url = "\${HA_URL}/api/mcp/assist";
+                        headers.Authorization = "Bearer \${HA_TOKEN}";
+                    };
+                };
+            };
         };
     };
 }
