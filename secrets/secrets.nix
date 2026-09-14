@@ -15,14 +15,26 @@ let
   homeserver = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHqEd/Iew4ztsH+j5G1gsL9332sccR/5Aiq8Wl3AUpt9 root@nixos";
   admin = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMH2S3ZA0agXgsNM8RWJ1JvJrfe2Bq00Zc2mQwmjhAjX karli@Karls-Surface";
 
+  # Agents with no SSH key of their own yet (e.g. a family member who hasn't
+  # generated a keypair): whose key stands in as the editor of their secret,
+  # until they get one and are added to sshKeys in hermes_profiles.nix -- at
+  # which point remove them from this map and the normal per-agent rule
+  # below takes over on its own.
+  noKeyEditor = {
+    sabine = admin;
+  };
+
   # One rule per agent: that person's own keys, plus the host.  Deliberately
   # NOT the admin -- Karl can read any decrypted file as root anyway, but
   # keeping him off the recipient list means the ciphertext at rest is not his
   # to open, and the separation is visible in the repo.
   agentRules = builtins.mapAttrs (name: agent:
-    assert agent.sshKeys != [ ] ||
-      throw "secrets.nix: agent '${name}' has no sshKeys, so nobody could edit hermes-${name}.age. Add a key in hermes_profiles.nix.";
-    { publicKeys = agent.sshKeys ++ [ homeserver ]; }
+    if agent.sshKeys != [ ] then
+      { publicKeys = agent.sshKeys ++ [ homeserver ]; }
+    else if noKeyEditor ? ${name} then
+      { publicKeys = [ noKeyEditor.${name} homeserver ]; }
+    else
+      throw "secrets.nix: agent '${name}' has no sshKeys, so nobody could edit hermes-${name}.age. Add a key in hermes_profiles.nix, or an entry in noKeyEditor here."
   ) agents;
 
   # Re-key the attrset from "<name>" to "hermes-<name>.age", matching the
