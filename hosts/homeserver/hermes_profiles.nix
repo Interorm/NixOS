@@ -148,6 +148,7 @@ in {
                     home-assistant-fullaccess = {
                         url = "\${HA_URL_FULLACCESS}";
                     };
+                };
             };
         };
     };
