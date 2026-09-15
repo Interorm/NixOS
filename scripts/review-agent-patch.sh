@@ -40,11 +40,18 @@ set -euo pipefail
 # hardware, or the module structure.  Widen it deliberately and by hand.
 ALLOWLIST=(
     # the MCP fleet declaration
-    "modules/services/hermes/mcps.nix"
+    "hermes/mcps.nix"
+    # per-account agent files (soul, ports, secrets wiring, profiles) --
+    # deliberately explicit and NOT a hermes/*.nix wildcard: that would also
+    # match hermes/fleet.nix (host-wide, not any one person's) and
+    # hermes/default.nix (module wiring).  Add a line here when a new
+    # account is added to hermes/.
+    "hermes/karl.nix"
+    "hermes/joni.nix"
+    "hermes/nana.nix"
+    "hermes/sabine.nix"
     # the shared Lean setup
     "modules/development/lean-math.nix"
-    # per-host agent profiles (models, souls, ports, secrets wiring)
-    "hosts/*/hermes_profiles.nix"
     # per-person home configuration
     "home/*/git.nix"
     "home/*/default.nix"

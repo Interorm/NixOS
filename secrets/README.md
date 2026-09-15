@@ -27,9 +27,10 @@ works unchanged on a host that hasn't migrated.
 ## Who can decrypt what
 
 **You never declare keys twice.** `secrets/secrets.nix` derives every recipient
-from `hosts/homeserver/hermes_profiles.nix` — the `sshKeys` you already set per
-agent. Adding an agent there automatically creates a rule for
-`hermes-<name>.age` encrypted to that person plus the host.
+from the per-account files in `hermes/` (`hermes/karl.nix`, `hermes/joni.nix`,
+...) — the `sshKeys` you already set per agent. Adding an agent there
+automatically creates a rule for `hermes-<name>.age` encrypted to that person
+plus the host.
 
 | Secret | Recipients | Source |
 |---|---|---|

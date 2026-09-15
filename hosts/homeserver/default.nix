@@ -22,7 +22,7 @@
         ../../modules/services/tailscale.nix
         
         ../../modules/services/hermes/default.nix
-        ./hermes_profiles.nix
+        ../../hermes/default.nix
 
         ../../modules/llama.cpp/default_homeserver.nix
         ./endpoints.nix

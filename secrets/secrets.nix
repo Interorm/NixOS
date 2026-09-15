@@ -1,12 +1,25 @@
 let
   # Module arguments are never forced for the attributes we read.
-  profile = import ../hosts/homeserver/hermes_profiles.nix {
-    pkgs = null;
-    config = null;
-    lib = null;
-  };
+  #
+  # One import per account file (not the merged hermes/default.nix, which
+  # is a NixOS module fragment -- an `imports = [...]` list, not something
+  # plain `import` merges).  Each account file returns a plain attrset
+  # shaped `{ services.hermes-agents.agents.<name> = {...}; }`, so `//`
+  # across all of them gives the same `agents` this file needs, without
+  # forcing full NixOS module evaluation just to read `sshKeys`.
+  agentFiles = [
+    ../hermes/karl.nix
+    ../hermes/joni.nix
+    ../hermes/nana.nix
+    ../hermes/sabine.nix
+  ];
 
-  agents = profile.services.hermes-agents.agents;
+  dummyArgs = { pkgs = null; config = null; lib = null; };
+
+  agents = builtins.foldl'
+    (acc: f: acc // (import f dummyArgs).services.hermes-agents.agents)
+    {}
+    agentFiles;
 
   # The homeserver's SSH *host* key: /etc/ssh/ssh_host_ed25519_key.pub.
   # The host must be a recipient of every secret it decrypts at activation,
@@ -17,7 +30,7 @@ let
 
   # Agents with no SSH key of their own yet (e.g. a family member who hasn't
   # generated a keypair): whose key stands in as the editor of their secret,
-  # until they get one and are added to sshKeys in hermes_profiles.nix -- at
+  # until they get one and are added to sshKeys in hermes/<name>.nix -- at
   # which point remove them from this map and the normal per-agent rule
   # below takes over on its own.
   noKeyEditor = {
@@ -35,7 +48,7 @@ let
     else if noKeyEditor ? ${name} then
       { publicKeys = [ noKeyEditor.${name} homeserver ]; }
     else
-      throw "secrets.nix: agent '${name}' has no sshKeys, so nobody could edit hermes-${name}.age. Add a key in hermes_profiles.nix, or an entry in noKeyEditor here."
+      throw "secrets.nix: agent '${name}' has no sshKeys, so nobody could edit hermes-${name}.age. Add a key in hermes/${name}.nix, or an entry in noKeyEditor here."
   ) agents;
 
   # Re-key the attrset from "<name>" to "hermes-<name>.age", matching the
@@ -47,7 +60,7 @@ let
 
   # Agents with googleWorkspace.enable additionally get google-<name>.age,
   # holding their OAuth client secret JSON.  Derived from the same profile, so
-  # enabling the option in hermes_profiles.nix is the only edit needed -- the
+  # enabling the option in hermes/<name>.nix is the only edit needed -- the
   # rule appears here on its own.
   googleAgents = builtins.filter
     (name: (agents.${name}.googleWorkspace or { }).enable or false)
