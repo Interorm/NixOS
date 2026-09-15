@@ -22,6 +22,7 @@ let
   # below takes over on its own.
   noKeyEditor = {
     sabine = admin;
+    nana = admin;
   };
 
   # One rule per agent: that person's own keys, plus the host.  Deliberately
