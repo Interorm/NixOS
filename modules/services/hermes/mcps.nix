@@ -6,12 +6,17 @@
     ...
 }: let
     cfg = config.services.hermes-agents;
+
+    # Not in nixpkgs -- packaged from the PyPI sdist. See the file for why
+    # this isn't just `uvx paper-search-mcp`.
+    paper-search-mcp = pkgs.callPackage ./paper-search-mcp.nix { };
 in {
     config = lib.mkIf cfg.enable {
         environment.systemPackages = with pkgs; [
             mcp-nixos 
             github-mcp-server
             firecrawl-mcp
+            paper-search-mcp
         ];
 
         services.hermes-agents.mcpServers = {
@@ -48,6 +53,15 @@ in {
             # Ask questions about any public GitHub repo (Devin's DeepWiki).
             deepwiki = {
                 url = "https://mcp.deepwiki.com/mcp";
+            };
+
+            # Search/download/read academic papers (arXiv, PubMed, bioRxiv,
+            # medRxiv, Semantic Scholar, Crossref, OpenAlex, DOAJ, Zenodo,
+            # HAL, SSRN, ...). All sources work keyless; CORE/DOAJ/Unpaywall
+            # accept an optional key via env for higher rate limits -- add
+            # one later as an agenix secret if this gets rate-limited.
+            paper-search = {
+                command = "${paper-search-mcp}/bin/paper-search-mcp";
             };
         };
     };
