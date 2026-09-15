@@ -205,7 +205,7 @@
     # exposes.  That sameness is deliberate: the hermes package (including the
     # `dependencyGroups` extras, which are baked in at build time) is ONE
     # derivation, and every agent's profile symlinks to it.
-    mkHome = name: agent: { ... }: {
+    mkHome = name: agent: { lib, pkgs, ... }: {
         imports = [ inputs.hermes-agent.homeManagerModules.default ];
 
         home.username = name;
@@ -348,6 +348,40 @@
                 interfaceName = cfg.dashboardInterface;
             };
         };
+
+        # Each declared sub-profile needs its OWN .env -- Hermes resolves a
+        # profile's credentials from `<HERMES_HOME>/profiles/<name>/.env`
+        # with NO fallback to the top-level `.env` (confirmed against
+        # hermes_cli/profiles.py: a profile with no .env of its own has no
+        # credentials, full stop -- it does not inherit the parent's).  The
+        # upstream Home Manager module only ever renders ONE .env, at the
+        # top level (`services.hermes-agent.environmentFiles`), so
+        # sub-profiles are left with none unless something else writes one.
+        #
+        # Simplest correct fix, and what was asked for: every profile gets
+        # a raw copy of the SAME agenix-decrypted secret the top-level
+        # profile uses (agent.environmentFile) -- not a distinct secret per
+        # profile.  This is a plain `install`, not the upstream envScript's
+        # merge-with-`environment` logic, because that logic exists to fold
+        # in the top-level's non-secret dashboard/API-server vars, which
+        # are meaningless for a sub-profile.  If a profile ever needs its
+        # own distinct credentials (e.g. its own GITHUB_TOKEN scoped
+        # narrower than the parent's), give it a real per-profile agenix
+        # secret and swap the source path here for that profile only.
+        #
+        # entryAfter "hermesAgentSetup": that activation entry (from the
+        # imported hermes-agent Home Manager module) is what creates
+        # `profiles/<name>/` in the first place, via installDocuments on
+        # `hermesHomeFiles` -- installing the .env after it exists is not
+        # strictly required (`install -D` makes parent dirs itself) but
+        # keeps the ordering legible.
+        home.activation.hermesProfileEnv = lib.hm.dag.entryAfter [ "hermesAgentSetup" ] (
+            lib.concatMapStringsSep "\n" (pname: ''
+                $DRY_RUN_CMD ${pkgs.coreutils}/bin/install -D -m 0600 \
+                    ${lib.escapeShellArg agent.environmentFile} \
+                    ${lib.escapeShellArg "/home/${name}/.hermes/profiles/${pname}/.env"}
+            '') (lib.attrNames agent.profiles)
+        );
     };
 
     agentSubmodule = lib.types.submodule ({ name, ... }: {
@@ -662,6 +696,27 @@
                     `~/.local/bin/<name>` alias (add one with `hermes
                     profile alias <name>` if wanted; it is a convenience,
                     not a requirement for `-p`/Kanban routing to work).
+
+                    Also installs a `.env` for each declared profile, a
+                    plain copy of this agent's `environmentFile` -- a
+                    profile with no `.env` of its own has NO credentials at
+                    all (Hermes does not fall back to the parent profile's),
+                    so this is required, not cosmetic.  All profiles
+                    currently share one secret; give a profile its own
+                    agenix secret instead if it ever needs narrower
+                    credentials than its siblings.
+
+                    Skills are NOT declared here on purpose. A profile's
+                    `skills/` directory is seeded once by Hermes itself (on
+                    first use) and is never touched by this module again --
+                    same as the top-level profile's skills today -- so
+                    `nixos-rebuild` cannot wipe hand- or agent-authored
+                    skills in `~/.hermes/profiles/<name>/skills/`.  Manage
+                    them the normal Hermes way: `sudo -iu <agent> hermes -p
+                    <name> skill_manage ...`, or drop a SKILL.md in over
+                    SSH. Use `skills.external_dirs` in a profile's `settings`
+                    if you want a skill shared by name across profiles
+                    without duplicating files.
 
                     All profiles for an agent share that agent's ONE
                     gateway process, HERMES_HOME, and `~/.hermes/kanban.db`
