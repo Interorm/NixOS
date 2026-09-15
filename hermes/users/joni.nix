@@ -1,0 +1,32 @@
+{ pkgs, config, lib, ... }:
+
+let
+    inherit (import ../lib.nix { inherit pkgs config lib; }) mcp;
+in {
+    services.hermes-agents.agents.joni = {
+        dashboard.port = 9080;
+        mobile.enable = true;
+
+        sshKeys = [
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOH8RZAPIW6QtCf47hpdpLhPVd30PtbktPPSQJ6JooPd jonbrod@laptop"
+        ];
+        extraPackages = with pkgs; [ elan ];
+
+        mcpServers = {
+            inherit (mcp) github nixos firecrawl context7 deepwiki;
+        };
+
+        soul = ''
+            You are Karl's personal assistant running on his homelab. Be concise but thorough.  
+            ALWAYS use MCPs if they seem relevant, prefer MCPs over own scripts or knowledge.
+            You have access to the internet via web search, a paper search mcp and firecrawl. When asked to perform research, use firecrawl and the paper search mcp for real results.
+            You have access to a nix environment, so you can run nix commands. Reference the NixOS mcp for documentation whenever there is a Nix-adjacent task.
+
+        '';
+
+        # No sub-profiles yet.  Graft presets in the same way karl.nix does
+        # when Joni wants specialists:
+        #   profiles = { inherit (profiles) researcher; };
+        profiles = { };
+    };
+}
