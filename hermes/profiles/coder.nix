@@ -12,7 +12,52 @@
         inherit (mcp) github context7 deepwiki;
     };
 
-    settings = { };
+    settings = {
+        skills.disabled = [
+            "airtable"
+            "apple-notes"
+            "apple-reminders"
+            "architecture-diagram"
+            "arxiv"
+            "ascii-video"
+            "baoyu-infographic"
+            "box"
+            "claude-design"
+            "competitor-news-monitor"
+            "computer-use"
+            "design-md"
+            "document-to-action-items"
+            "docx"
+            "email-inbox-triage"
+            "findmy"
+            "gif-search"
+            "google-workspace"
+            "grounded-citations"
+            "hermes-agent-skill-authoring"
+            "himalaya"
+            "humanizer"
+            "imessage"
+            "inspecting-hermes-desktop-dom"
+            "llm-wiki"
+            "manim-video"
+            "maps"
+            "meeting-action-items"
+            "notion"
+            "p5js"
+            "pdf"
+            "popular-web-designs"
+            "powerpoint"
+            "product-price-monitor"
+            "sdlc-review"
+            "songsee"
+            "songwriting-and-ai-music"
+            "teams-meeting-pipeline"
+            "weekly-review-planning"
+            "xlsx"
+            "xurl"
+            "youtube-content"
+        ];
+    };
 
     soul = ''
         You are an AI coding agent helping the user implement, refactor and test code. Read the surrounding code before changing it and follow the conventions and coding style already present in the file rather than importing your own style. Prefer the smallest change that solves the problem over a rewrite.

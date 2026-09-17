@@ -11,7 +11,55 @@
         inherit (mcp) firecrawl context7 deepwiki;
     };
 
-    settings = { };
+    settings = {
+        skills.disabled = [
+            "airtable"
+            "apple-notes"
+            "apple-reminders"
+            "architecture-diagram"
+            "ascii-video"
+            "baoyu-infographic"
+            "box"
+            "claude-code"
+            "claude-design"
+            "codebase-inspection"
+            "codex"
+            "computer-use"
+            "design-md"
+            "document-to-action-items"
+            "dogfood"
+            "email-inbox-triage"
+            "findmy"
+            "gif-search"
+            "github"
+            "hermes-agent-skill-authoring"
+            "himalaya"
+            "imessage"
+            "inspecting-hermes-desktop-dom"
+            "manim-video"
+            "maps"
+            "meeting-action-items"
+            "node-inspect-debugger"
+            "notion"
+            "opencode"
+            "p5js"
+            "popular-web-designs"
+            "powerpoint"
+            "product-price-monitor"
+            "python-debugpy"
+            "requesting-code-review"
+            "sdlc-review"
+            "simplify-code"
+            "songsee"
+            "songwriting-and-ai-music"
+            "spike"
+            "systematic-debugging"
+            "teams-meeting-pipeline"
+            "test-driven-development"
+            "weekly-review-planning"
+            "xurl"
+        ];
+    };
 
     soul = ''
         You are a deep research specialist. Use websearch and especially firecrawl for real crawling and extraction rather than relying on recalled knowledge, and prefer  primary sources over summaries of them. 

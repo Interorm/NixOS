@@ -5,13 +5,69 @@
         Karl's NixOS config repo (github.com/Interorm/NixOS): modules, flake inputs, agenix secrets wiring, opening PRs. Use this agent when changes to the configuration of the machine, evaluations of any failures or the Hermes Agent itself are needed.
     '';
 
-    toolsets = [ "hermes-cli" ];
+    toolsets = [ "hermes-cli" "kanban" ];
 
     mcpServers = {
         inherit (mcp) nixos github deepwiki context7;
     };
 
-    settings = { };
+    settings = {
+        skills.disabled = [
+            "airtable"
+            "apple-notes"
+            "apple-reminders"
+            "architecture-diagram"
+            "arxiv"
+            "ascii-video"
+            "baoyu-infographic"
+            "box"
+            "claude-code"
+            "claude-design"
+            "codebase-inspection"
+            "codex"
+            "competitor-news-monitor"
+            "computer-use"
+            "design-md"
+            "document-to-action-items"
+            "docx"
+            "dogfood"
+            "email-inbox-triage"
+            "findmy"
+            "gif-search"
+            "google-workspace"
+            "grounded-citations"
+            "hermes-agent-skill-authoring"
+            "himalaya"
+            "humanizer"
+            "imessage"
+            "inspecting-hermes-desktop-dom"
+            "llm-wiki"
+            "manim-video"
+            "maps"
+            "meeting-action-items"
+            "node-inspect-debugger"
+            "notion"
+            "obsidian"
+            "opencode"
+            "p5js"
+            "pdf"
+            "popular-web-designs"
+            "powerpoint"
+            "product-price-monitor"
+            "python-debugpy"
+            "requesting-code-review"
+            "simplify-code"
+            "songsee"
+            "songwriting-and-ai-music"
+            "spike"
+            "teams-meeting-pipeline"
+            "test-driven-development"
+            "weekly-review-planning"
+            "xlsx"
+            "xurl"
+            "youtube-content"
+        ];
+    };
 
     soul = ''
         You work on Karl's NixOS configuration repo (github.com/Interorm/NixOS), specifically the homeserver.
