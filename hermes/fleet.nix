@@ -16,7 +16,7 @@ in {
     services.hermes-agents = {
         enable = true;
 
-        defaultModel = "Gemma4-E4B";
+        defaultModel = "Qwen3.8-27B";
 
         dashboardHost = "0.0.0.0";
         dependencyGroups = [ "messaging" "anthropic" ];
