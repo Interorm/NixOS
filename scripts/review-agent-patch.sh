@@ -39,12 +39,20 @@ set -euo pipefail
 # (inputs = supply chain), the review script (this file = the gate), host
 # hardware, or the module structure.  Widen it deliberately and by hand.
 ALLOWLIST=(
-    # the MCP fleet declaration
-    "modules/services/hermes/mcps.nix"
+    # the MCP server snippets and profile presets -- one small file each,
+    # composed into users below
+    "hermes/mcp/*.nix"
+    "hermes/profiles/*.nix"
+    # per-account agent files (soul, ports, secrets wiring, profile roster).
+    # Deliberately enumerated rather than a hermes/users/*.nix glob: adding a
+    # NEW account is also a new Unix user + agenix secret, so it should be a
+    # human decision, not something an agent can slip in.
+    "hermes/users/karl.nix"
+    "hermes/users/joni.nix"
+    "hermes/users/nana.nix"
+    "hermes/users/sabine.nix"
     # the shared Lean setup
     "modules/development/lean-math.nix"
-    # per-host agent profiles (models, souls, ports, secrets wiring)
-    "hosts/*/hermes_profiles.nix"
     # per-person home configuration
     "home/*/git.nix"
     "home/*/default.nix"

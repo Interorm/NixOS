@@ -65,6 +65,184 @@
         inherit (cfg.mobile) rev hash;
     };
 
+    # -- Declarative sub-profiles ---------------------------------------
+    #
+    # A "profile" in Hermes is just a directory under HERMES_HOME/profiles/
+    # -- so dropping config.yaml/SOUL.md/profile.yaml/.env into
+    # ~/.hermes/profiles/<name>/ declaratively is enough to make `hermes -p
+    # <name> ...` and a Kanban dispatcher worker see a real profile.  No
+    # `hermes profile create` needed: that command additionally makes a
+    # `~/.local/bin/<name>` alias, which is a convenience (`hermes profile
+    # alias <name>` adds one later) and not required for -p or Kanban
+    # routing.
+    #
+    # This reimplements a small slice of what nix/moduleCommon.nix's
+    # `mcpServersToConfig` and `mkConfigFiles` do for the TOP-LEVEL profile,
+    # because those are internal to the upstream Home Manager module and
+    # only ever render ONE config.yaml (the one at HERMES_HOME root) -- a
+    # sub-profile's config.yaml has to be hand-built.  Kept to the entry
+    # shapes this repo actually uses (stdio command/args/env, HTTP
+    # url/headers); extend here if a profile ever needs
+    # auth/sampling/tool-filtering on an MCP server.
+    mkProfileMcpServerEntry = srv:
+        lib.optionalAttrs (srv ? command) { inherit (srv) command; args = srv.args or []; }
+        // lib.optionalAttrs (srv ? env) { inherit (srv) env; }
+        // lib.optionalAttrs (srv ? url) { inherit (srv) url; }
+        // lib.optionalAttrs (srv ? headers) { inherit (srv) headers; }
+        // { enabled = srv.enabled or true; };
+
+    # One profile's config.yaml.  Layered the same way the top-level
+    # profile's is (module defaults < fleet-wide < the profile's own
+    # `settings`), so a profile can override any leaf.
+    #
+    # MCP servers are NOT inherited from the agent: a profile's `mcpServers`
+    # is its COMPLETE set (over the fleet-wide base, which this repo leaves
+    # empty).  Inheriting the agent's would make the narrow loadouts
+    # meaningless -- an orchestrator that declares `mcpServers = {}` to keep
+    # its prefill minimal would silently still pay for every server the
+    # top-level profile uses, and `{}` cannot subtract.  A profile that
+    # genuinely wants the agent's set names the servers it wants; the
+    # snippets in hermes/mcp/ make that a one-line `inherit`.
+    mkProfileConfig = agent: pname: p: let
+        mergedMcp = cfg.mcpServers // p.mcpServers;
+    in builtins.toJSON (lib.recursiveUpdate (lib.recursiveUpdate ({
+        model = {
+            provider = "custom";
+            base_url = cfg.modelBaseUrl;
+            default = if p.model != null then p.model else agent.model;
+            api_key = "\${OPENAI_API_KEY}";
+        };
+        # The TOP-LEVEL `toolsets` key, which is what the kanban
+        # tool-availability gate reads (tools/kanban_tools.py ::
+        # _profile_has_kanban_toolset) -- NOT `platform_toolsets`, which is
+        # what `hermes tools enable kanban` writes and which that gate
+        # ignores.  Writing it here is what actually turns kanban_* tools on
+        # for a profile.  See hermes-agent issue #83042.
+        toolsets = p.toolsets;
+        # A profile with no MCP servers must render an EMPTY mcp_servers
+        # map, not omit the key: the fleet-wide `settings` deep-merges
+        # underneath, so omitting it would let a fleet-level mcp_servers
+        # block (if one is ever added) leak back in.  Explicit {} wins.
+        mcp_servers = lib.mapAttrs (_: mkProfileMcpServerEntry) mergedMcp;
+    }) cfg.settings) p.settings);
+
+    # hermesHomeFiles entries for one agent's sub-profiles, keyed under
+    # profiles/<name>/... -- upstream's mkDocumentTree already creates parent
+    # directories for keys containing "/", so nesting needs no extra work.
+    mkProfileFiles = agent: lib.foldl' (acc: pname: let
+        p = agent.profiles.${pname};
+        base = "profiles/${pname}";
+    in acc
+        // { "${base}/config.yaml" = mkProfileConfig agent pname p; }
+        // lib.optionalAttrs (p.soul != null) { "${base}/SOUL.md" = p.soul; }
+        // lib.optionalAttrs (p.description != null) {
+            # What `hermes profile describe <name> --text ...` would write.
+            # The Kanban decomposer routes work by this, so a profile
+            # without one is effectively invisible to routing.
+            "${base}/profile.yaml" = builtins.toJSON { description = p.description; };
+        }
+    ) {} (lib.attrNames agent.profiles);
+
+    profileSubmodule = lib.types.submodule ({ name, ... }: {
+        options = {
+            model = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                defaultText = lib.literalExpression "the parent agent's model";
+                description = ''
+                    Model id for this profile, as listed by the gateway at
+                    /v1/models.  null inherits the parent agent's `model`.
+                    Per-profile pins are how one role runs on a coder model
+                    while another runs on a general one.
+                '';
+            };
+
+            soul = lib.mkOption {
+                type = lib.types.nullOr (lib.types.either lib.types.str lib.types.path);
+                default = null;
+                description = ''
+                    Contents (string) or source file (path) of this
+                    profile's SOUL.md -- its identity.  null leaves whatever
+                    is on disk alone.
+                '';
+            };
+
+            description = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                example = "Web research, document analysis, fact-checking.";
+                description = ''
+                    One- or two-sentence description of what this profile is
+                    good at, written to profile.yaml.  Equivalent to `hermes
+                    profile describe <name> --text "..."`.  The Kanban
+                    decomposer reads it to route work by role rather than by
+                    profile name alone -- set it on anything meant to
+                    receive cards.
+                '';
+            };
+
+            toolsets = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ "hermes-cli" ];
+                example = [ "kanban" ];
+                description = ''
+                    This profile's top-level `toolsets` list in config.yaml.
+
+                    Note this is specifically the key the kanban tool-gate
+                    reads, NOT `platform_toolsets` (what `hermes tools
+                    enable` writes, and which that gate ignores -- upstream
+                    issue #83042).  List "kanban" here to give a profile
+                    kanban_* tools; the `all`/`*` wildcard deliberately does
+                    not include them.
+
+                    Omitting "hermes-cli" is a real tool-restriction
+                    mechanism: an orchestrator with `[ "kanban" ]` alone
+                    cannot edit files, which enforces "delegate, don't
+                    implement" far better than instructions in a SOUL can.
+                '';
+            };
+
+            settings = lib.mkOption {
+                type = lib.types.attrs;
+                default = {};
+                example = lib.literalExpression ''
+                    {
+                      skills.external_dirs = [ "/home/karl/.agents/skills" ];
+                      cron.model = "Gemma4-E4B";
+                    }
+                '';
+                description = ''
+                    Extra config.yaml keys for this profile, deep-merged over
+                    the fleet-wide `settings` and the model/toolsets/
+                    mcp_servers this module derives.
+                '';
+            };
+
+            mcpServers = lib.mkOption {
+                type = lib.types.attrsOf lib.types.attrs;
+                default = {};
+                description = ''
+                    MCP servers for this profile.  This is the profile's
+                    COMPLETE set, merged only over the fleet-wide
+                    `services.hermes-agents.mcpServers` -- the parent
+                    agent's servers are deliberately NOT inherited, so
+                    `mcpServers = {}` really means "none" and a narrow
+                    profile cannot silently pay for the agent's whole
+                    loadout (`{}` cannot subtract from an inherited set).
+                    Name the servers the role needs; with the snippets in
+                    hermes/mcp/ that is a one-line `inherit (mcp) ...`.
+
+                    Same entry shape as the agent-level option: stdio takes
+                    command/args/env, HTTP takes url/headers.
+
+                    Worth keeping narrow: a server's tool schemas enter the
+                    prefill of every request the profile makes, so servers
+                    the role never uses are a standing token cost.
+                '';
+            };
+        };
+    });
+
     # Hermes' own NixOS module (`services.hermes-agent`) is a singleton: one
     # `enable`, one user, one stateDir.  It cannot give you an agent per
     # person.  Its Home Manager module can, because Home Manager is already
@@ -75,7 +253,7 @@
     # exposes.  That sameness is deliberate: the hermes package (including the
     # `dependencyGroups` extras, which are baked in at build time) is ONE
     # derivation, and every agent's profile symlinks to it.
-    mkHome = name: agent: { ... }: {
+    mkHome = name: agent: { lib, pkgs, ... }: {
         imports = [ inputs.hermes-agent.homeManagerModules.default ];
 
         home.username = name;
@@ -192,7 +370,7 @@
                 # is silently inactive -- the worst outcome here, since it
                 # looks enabled in config.yaml.
                 "shell-hooks-allowlist.json" = doclingAllowlist;
-            };
+            } // mkProfileFiles agent;
 
             # `hermes dashboard` is a superset of `hermes serve`: the /api/ws
             # socket the desktop app attaches to, plus the browser panel, on
@@ -218,6 +396,37 @@
                 interfaceName = cfg.dashboardInterface;
             };
         };
+
+        # Each declared sub-profile needs its OWN .env.  Hermes resolves a
+        # profile's credentials from `<HERMES_HOME>/profiles/<name>/.env`
+        # with NO fallback to the top-level `.env` (hermes_cli/profiles.py
+        # seeds a placeholder .env per profile precisely so the root one is
+        # never read) -- a profile without one simply has no credentials.
+        # The upstream Home Manager module only ever renders ONE .env, at
+        # the top level via `environmentFiles`, so sub-profiles would be
+        # left without any and fail on their first model call.
+        #
+        # Every profile gets a copy of the SAME agenix secret the top-level
+        # profile uses.  A plain `install`, not upstream's envScript, because
+        # that script exists to fold in the top-level's non-secret
+        # dashboard/API-server vars (HERMES_DASHBOARD_BASIC_AUTH_USERNAME,
+        # API_SERVER_*), which are meaningless for a sub-profile -- only the
+        # agent's one gateway/backend binds ports.  If a profile ever needs
+        # narrower credentials than its siblings (its own GITHUB_TOKEN, say),
+        # give it a real per-profile agenix secret and point this at that
+        # path for that profile only.
+        #
+        # entryAfter "hermesAgentSetup": that upstream activation entry is
+        # what creates profiles/<name>/ in the first place (installDocuments
+        # over hermesHomeFiles).  `install -D` would make the directory
+        # itself, so this ordering is for legibility, not necessity.
+        home.activation.hermesProfileEnv = lib.hm.dag.entryAfter [ "hermesAgentSetup" ] (
+            lib.concatMapStringsSep "\n" (pname: ''
+                $DRY_RUN_CMD ${pkgs.coreutils}/bin/install -D -m 0600 \
+                    ${lib.escapeShellArg agent.environmentFile} \
+                    ${lib.escapeShellArg "/home/${name}/.hermes/profiles/${pname}/.env"}
+            '') (lib.attrNames agent.profiles)
+        );
     };
 
     agentSubmodule = lib.types.submodule ({ name, ... }: {
@@ -502,6 +711,52 @@
                     `url`/`headers`.  Secrets go in the agent's env file and
                     are referenced as `''${VAR}` -- Hermes resolves them at
                     runtime.
+                '';
+            };
+
+            profiles = lib.mkOption {
+                type = lib.types.attrsOf profileSubmodule;
+                default = {};
+                example = lib.literalExpression ''
+                    {
+                      inherit (profiles) orchestrator researcher;
+                      coder = profiles.coder // { model = "Qwen2.5-Coder-7B"; };
+                    }
+                '';
+                description = ''
+                    Declarative Hermes sub-profiles for this agent, i.e.
+                    `~/.hermes/profiles/<name>/` for a `hermes -p <name> ...`
+                    invocation, a Desktop profile switch, or a Kanban
+                    dispatcher worker assigned to that profile name.  Each
+                    entry renders that profile's config.yaml (model,
+                    toolsets, mcp_servers), its .env, and -- if set --
+                    SOUL.md and profile.yaml.
+
+                    In this repo the values normally come from the presets in
+                    `hermes/profiles/`, grafted by name via `hermes/lib.nix`;
+                    merge over one with `//` to tweak it for a single agent.
+
+                    All of an agent's profiles share that agent's ONE gateway
+                    process, HERMES_HOME and `~/.hermes/kanban.db` -- which
+                    is what lets a `kanban`-toolset profile route cards to
+                    its siblings.  It does NOT span Unix accounts: each
+                    agent has its own board, matching this module's
+                    per-user isolation.
+
+                    NOTE per-profile cron requires
+                    `settings.gateway.multiplex_profiles = true` (set
+                    fleet-wide in hermes/fleet.nix).  Cron stores are
+                    per-profile, and a non-multiplexing gateway ticks only
+                    the top-level profile's store -- a sub-profile's jobs
+                    would sit unfired with no error.
+
+                    Skills are deliberately NOT declared here.  A profile's
+                    `skills/` directory is seeded by Hermes on first use and
+                    never touched by this module, so `nixos-rebuild` cannot
+                    wipe hand- or agent-authored skills.  Manage them the
+                    normal way (`hermes -p <name>` + skill_manage, or the
+                    Desktop app), and share them across profiles with
+                    `settings.skills.external_dirs` if wanted.
                 '';
             };
         };

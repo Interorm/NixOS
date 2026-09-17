@@ -10,7 +10,7 @@
     craftyDataDir = "/var/lib/Minecraft/docker";
 
     # Every agent's home, DERIVED from the agents set so adding an agent to
-    # hosts/homeserver/hermes_profiles.nix automatically gets it backed up
+    # hermes/users/<name>.nix automatically gets it backed up
     # with no edit here.  Reading only the attribute *names* is what keeps
     # this from recursing.
     agentNames = lib.attrNames config.services.hermes-agents.agents;
