@@ -436,10 +436,9 @@
         # give it a real per-profile agenix secret and point this at that
         # path for that profile only.
         #
-        # entryAfter "hermesAgentSetup": that upstream activation entry is
-        # what creates profiles/<name>/ in the first place (installDocuments
-        # over hermesHomeFiles).  `install -D` would make the directory
-        # itself, so this ordering is for legibility, not necessity.
+        # entryAfter "hermesAgentSetup": that upstream activation entry
+        # installs hermesHomeFiles (including this profile's config.yaml,
+        # SOUL.md and profile.yaml) and sets up the top-level home.
         home.activation.hermesProfileEnv = lib.hm.dag.entryAfter [ "hermesAgentSetup" ] (
             lib.concatMapStringsSep "\n" (pname: ''
                 $DRY_RUN_CMD ${pkgs.coreutils}/bin/install -D -m 0600 \
@@ -447,7 +446,98 @@
                     ${lib.escapeShellArg "/home/${name}/.hermes/profiles/${pname}/.env"}
             '') (lib.attrNames agent.profiles)
         );
+
+        # Real profile creation, before the declared files are installed
+        # over the seeded defaults.  See mkProfileCreateScript for the full
+        # rationale.  entryBefore "hermesAgentSetup" AND after
+        # "writeBoundary"/"linkGeneration" is inherited from that entry's own
+        # ordering, so the agenix secret is already decrypted by this point.
+        home.activation.hermesProfileCreate =
+            lib.mkIf (agent.profiles != {})
+                (lib.hm.dag.entryBefore [ "hermesAgentSetup" ]
+                    (mkProfileCreateScript name agent));
     };
+
+    # Create each declared sub-profile with Hermes' OWN `profile create`,
+    # before any of this module's files are written into it.
+    #
+    # WHY SHELL OUT INSTEAD OF RENDERING THE DIRECTORY OURSELVES: a Hermes
+    # profile is not "a directory with some files in it", it is a directory
+    # plus an initialisation PROCEDURE, and reproducing that procedure in
+    # Nix means reproducing it wrongly.  `hermes_cli/profiles.py ::
+    # create_profile()` makes nine state dirs (_PROFILE_DIRS = memories
+    # sessions skills skins logs plans workspace cron home), seeds the
+    # bundled skill catalogue (~58 skills), creates state.db, writes
+    # profile.yaml, and runs a config-schema migration so the profile is not
+    # stamped v0.  An earlier version of this module rendered only the files
+    # it knew about and each rebuild surfaced another missing piece:
+    #   * no .env            -> profile had no credentials at all
+    #   * no sessions/       -> every Kanban worker died at startup with
+    #                           HomeInitializationError (managed mode makes
+    #                           Hermes REFUSE to create its own state dirs:
+    #                           config_home.py passes create=not managed)
+    #   * no skills/         -> 0 skills vs 58 in a real profile
+    #   * only 5 of the 9 _PROFILE_DIRS, missing skins/ plans/ workspace/
+    #     and home/ (the per-profile $HOME for tool subprocesses)
+    # Those are instances of ONE mistake, not four bugs, and the list would
+    # keep growing every time upstream adds to the procedure.
+    #
+    # (Not in that list, because checking showed it is not ours: a fresh
+    # profile reports "config version outdated v0 -> v42" in `hermes
+    # doctor` whether it was made by this module or by `hermes profile
+    # create` directly -- the schema migration only runs for CLONED
+    # profiles.  Cosmetic, upstream's, and deliberately not worked around
+    # here.)
+    #
+    # So: Hermes owns CREATION, Nix owns CONFIGURATION.  This runs
+    # `profile create` only when the directory is absent, which makes it
+    # idempotent and leaves a profile's accumulated state (sessions,
+    # memories, agent-authored skills) untouched across rebuilds.  The
+    # config.yaml/SOUL.md/profile.yaml this module declares are written
+    # AFTERWARDS by the upstream activation, over the seeded defaults --
+    # upstream's merge script deep-merges the Nix keys over what is on disk
+    # (`deep_merge(existing, nix)`), so declared keys win while
+    # Hermes-owned bookkeeping like config_version survives.
+    #
+    # --no-alias: the `~/.local/bin/<name>` wrapper is a convenience for
+    # interactive shells and not needed for `-p` or Kanban routing; leaving
+    # it out keeps activation from writing outside HERMES_HOME.
+    # --description: what the Kanban decomposer routes on.  Passed here as
+    # well as rendered into profile.yaml so a profile is routable from the
+    # moment it exists, even before the first file install.
+    #
+    # Ordering: entryBefore hermesAgentSetup, because that entry installs
+    # this profile's declared files and they must land on top of, not under,
+    # the seeded defaults.
+    #
+    # Failure policy: a failed creation must NOT abort activation (that
+    # would take the whole system generation down over one profile).  It
+    # warns loudly instead; the profile is then missing and its Kanban cards
+    # will not dispatch, which is visible on the board.
+    mkProfileCreateScript = name: agent: let
+        hermesBin = "${
+            if agent.mobile.enable then hermesMobile.package else
+            inputs.hermes-agent.packages.${pkgs.stdenv.hostPlatform.system}.default
+        }/bin/hermes";
+        home = "/home/${name}/.hermes";
+    in lib.concatMapStringsSep "\n" (pname: let
+        p = agent.profiles.${pname};
+        descArgs = lib.optionalString (p.description != null)
+            "--description ${lib.escapeShellArg p.description}";
+    in ''
+        if [ ! -d ${lib.escapeShellArg "${home}/profiles/${pname}"} ]; then
+          echo "hermes-agents: creating profile '${pname}' for ${name}"
+          # HERMES_HOME pins the parent home so the new profile lands under
+          # it rather than under whatever home the activation inherits.
+          # HERMES_MANAGED is deliberately NOT unset: `profile create` has no
+          # managed-mode gate (verified against hermes_cli/profiles.py), so
+          # it works as-is and the marker keeps the rest of the CLI honest.
+          $DRY_RUN_CMD env HERMES_HOME=${lib.escapeShellArg home} \
+            ${hermesBin} profile create ${lib.escapeShellArg pname} \
+            --no-alias ${descArgs} \
+            || echo "hermes-agents: WARNING could not create profile '${pname}' for ${name}; its Kanban cards will not dispatch" >&2
+        fi
+    '') (lib.attrNames agent.profiles);
 
     agentSubmodule = lib.types.submodule ({ name, ... }: {
         options = {
