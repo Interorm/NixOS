@@ -27,7 +27,7 @@ in {
         ];
         googleWorkspace.enable = true;
         mcpServers = {
-            inherit (mcp) github nixos firecrawl context7 deepwiki;
+            inherit (mcp) github nixos firecrawl context7 deepwiki onedrive;
         };
 
         soul = ''
