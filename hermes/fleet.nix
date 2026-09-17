@@ -6,14 +6,6 @@
     enable_docling = true;
 
 in {
-    # Host-wide facts about the Hermes fleet: which speech backend, which
-    # document pipeline, which gateway topology.  Properties of the HOST,
-    # not of any one person -- per-account identity lives in ./users/, MCP
-    # snippets in ./mcp/, profile presets in ./profiles/.
-    services.lean-math = {
-        enable = true;
-        users = [ "karl" "joni" ];
-    };
 
     services.docling = {
         enable = enable_docling;
@@ -32,12 +24,6 @@ in {
         secretsBackend = "agenix";
         doclingPdfHook.enable = enable_docling;
 
-        # No fleet-wide MCP servers, deliberately.  Every MCP a profile
-        # loads puts its tool schemas into the prefill of every request
-        # that profile makes, so a server nobody in a given role needs is
-        # pure token cost.  Servers are named per profile (hermes/profiles/
-        # via the ./mcp registry) or per agent (hermes/users/<name>.nix),
-        # never globally.
         mcpServers = { };
 
         settings = {
