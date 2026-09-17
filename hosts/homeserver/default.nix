@@ -4,26 +4,33 @@
 }: {
 
     imports = [
+        # Essentials
         ./hardware-configuration.nix
         ../../modules/default.nix
 
+        # CUDA
+        ../../modules/hardware/nvidia.nix
+        ../../modules/development/cuda.nix
+
+        # Important globals
         ./users.nix
         ./secrets.nix
 
+        # Backups
         ../../modules/services/backup.nix
 
-        ../../modules/hardware/nvidia.nix
-        ../../modules/development/cuda.nix
+        # Dev
         ../../modules/development/lean-math.nix
 
-        ../../modules/services/minecraft/crafty.nix
-
-        ../../modules/services/docling.nix
+        # Access for other Users
         ../../modules/services/tailscale.nix
         
+        # Minecraft Servers
+        ../../modules/services/minecraft/crafty.nix
+        
+        # Hermes and AI
         ../../modules/services/hermes/default.nix
         ../../hermes/default.nix
-
         ../../modules/llama.cpp/default_homeserver.nix
         ./endpoints.nix
     ];
