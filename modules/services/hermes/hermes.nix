@@ -447,6 +447,45 @@
                     ${lib.escapeShellArg "/home/${name}/.hermes/profiles/${pname}/.env"}
             '') (lib.attrNames agent.profiles)
         );
+
+        # Each sub-profile's STATE SKELETON.  Without this every worker
+        # spawned into a sub-profile hard-exits before its first turn:
+        #
+        #   HomeInitializationError: Cannot initialize Hermes directory
+        #   .../profiles/hr/sessions: Required directory does not exist
+        #
+        # Why it cannot be left to Hermes: hermes_cli/config_home.py ::
+        # initialize_home() calls `_ensure_directory(..., create=not
+        # managed)` for ("cron", "sessions", "logs", "memories").  On this
+        # install `is_managed()` is TRUE (the gateway unit exports
+        # HERMES_MANAGED=home-manager), so create=False -- Hermes
+        # deliberately REFUSES to create a missing state dir and raises
+        # instead, on the principle that a vanished directory is more
+        # likely an unmounted volume than a fresh install.
+        #
+        # Upstream's own activation does create these, but only ever for
+        # the TOP-LEVEL hermesHome (`mkdir -p` over `common.stateSubdirs`);
+        # it knows nothing about profiles/<name>/ subdirectories, which are
+        # this module's invention.  hermesHomeFiles cannot substitute: it
+        # installs FILES, so it only creates the parent directories a
+        # declared file happens to need (profiles/<n>/ itself, and logs/
+        # only because a curator path lands under it) -- never an empty
+        # sessions/ or memories/.  Hence the observed asymmetry where the
+        # default profile worked and every named profile died.
+        #
+        # Mirrors common.stateSubdirs exactly, plugins/ included: a profile
+        # that later gains a plugin must not fail the same way.  0700 to
+        # match what upstream's _secure_dir leaves on the top-level home
+        # (plugins/ is 0755 there, but 0700 is strictly safer and the agent
+        # is the only reader).
+        home.activation.hermesProfileDirs = lib.hm.dag.entryBefore [ "hermesProfileEnv" ] (
+            lib.concatMapStringsSep "\n" (pname:
+                lib.concatMapStringsSep "\n" (sub: ''
+                    $DRY_RUN_CMD ${pkgs.coreutils}/bin/mkdir -p -m 0700 \
+                        ${lib.escapeShellArg "/home/${name}/.hermes/profiles/${pname}/${sub}"}
+                '') [ "cron" "sessions" "logs" "memories" "plugins" ]
+            ) (lib.attrNames agent.profiles)
+        );
     };
 
     agentSubmodule = lib.types.submodule ({ name, ... }: {
