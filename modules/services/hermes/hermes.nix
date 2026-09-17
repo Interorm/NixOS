@@ -315,7 +315,27 @@
             };
 
             extraDependencyGroups = cfg.dependencyGroups;
+            # `pkgs.systemd` is not decoration: the Kanban dispatcher spawns
+            # each worker inside `systemd-run --user --scope` so the child
+            # survives a gateway restart.  User units do NOT inherit the
+            # system PATH, and upstream's processPath only contributes
+            # hermes/bash/coreutils/git plus extraPackages -- so without
+            # this, systemd-run is simply not found and EVERY card fails to
+            # spawn, twice, then auto-blocks via the circuit breaker.
+            #
+            # The reported error is badly misleading ("systemd-run --user
+            # --scope is unavailable (usually no reachable user D-Bus
+            # session ...)", suggesting `loginctl enable-linger`) -- linger
+            # and the bus are fine here; the binary is just absent from the
+            # unit's PATH.  Verified on this host: cards sat in `blocked`
+            # with spawn_failed x2 while `systemd-run --user --scope` ran
+            # perfectly from an interactive shell as the same user.
+            #
+            # Fleet-wide rather than per-agent: any agent whose profiles
+            # receive Kanban cards needs it, and an agent silently missing
+            # it has a dead board with a misdiagnosing error message.
             extraPackages = agent.extraPackages
+                ++ [ pkgs.systemd ]
                 ++ lib.optional agent.googleWorkspace.enable googlePython;
 
             # Fleet-wide servers first, per-agent second.  `//` is a shallow
