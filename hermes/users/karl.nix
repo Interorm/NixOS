@@ -46,7 +46,7 @@ in {
         };
 
         profiles = {
-            inherit (profiles) orchestrator nixos hr researcher;
+            inherit (profiles) orchestrator coder nixos hr researcher;
         };
     };
 }
