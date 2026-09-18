@@ -38,5 +38,6 @@ let
     '';
 in {
     command = "${bin}/bin/onedrive-mcp";
+    env.ONEDRIVE_CLIENT_ID = "\${ONEDRIVE_CLIENT_ID}";
     args = [ ];
 }
