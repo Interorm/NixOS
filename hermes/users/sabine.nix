@@ -12,6 +12,7 @@ in {
 
         mcpServers = {
             home-assistant = mcp.home-assistant;
+            onedrive = mcp.onedrive;
         };
 
         soul = ''
