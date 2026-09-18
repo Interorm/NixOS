@@ -41,6 +41,64 @@
 
     doclingHookCommand = "${doclingHook}/bin/hermes-docling-pdf-hook";
 
+    # Remove mcp_servers entries the Nix config no longer declares.
+    #
+    # WHY THIS IS NEEDED AT ALL: an agent's top-level config.yaml is written
+    # by upstream's merge script, which is `deep_merge(existing, nix)` --
+    # Nix keys win, but keys only present ON DISK survive untouched.  That
+    # is right for Hermes' own runtime bookkeeping (config_version, dashboard
+    # state) and wrong for a declarative set: dropping a server from
+    # `mcpServers` in Nix leaves it in config.yaml forever, so it keeps
+    # loading and keeps costing prefill on every request.
+    #
+    # Observed: moving the fleet-wide MCP set to {} and scoping servers per
+    # profile left every agent still carrying all the old fleet servers.
+    # sabine, who should have exactly one (home-assistant), still had the
+    # full set.  Sub-profiles were unaffected -- their config.yaml goes
+    # through installDocuments' `install -D`, a full overwrite, so a removed
+    # server really disappears there.  That asymmetry is the tell.
+    #
+    # Deliberately surgical: ONLY mcp_servers, and only keys absent from the
+    # declared set.  A broad "replace the whole file" would also delete the
+    # runtime keys the merge script exists to preserve.  Removing the
+    # mcp_servers key entirely when nothing is declared keeps a stale block
+    # from lingering as an empty-but-present map.
+    pruneMcpScript = pkgs.writers.writePython3 "hermes-prune-mcp"
+        { libraries = [ pkgs.python3Packages.pyyaml ]; flakeIgnore = [ "E501" ]; }
+        ''
+        import sys
+
+        import yaml
+
+        config_path, *declared = sys.argv[1:]
+
+        try:
+            with open(config_path) as fh:
+                cfg = yaml.safe_load(fh) or {}
+        except FileNotFoundError:
+            sys.exit(0)
+
+        servers = cfg.get("mcp_servers")
+        if not isinstance(servers, dict):
+            sys.exit(0)
+
+        stale = [k for k in servers if k not in declared]
+        if not stale:
+            sys.exit(0)
+
+        for key in stale:
+            del servers[key]
+        if servers:
+            cfg["mcp_servers"] = servers
+        else:
+            cfg.pop("mcp_servers", None)
+
+        with open(config_path, "w") as fh:
+            yaml.dump(cfg, fh, default_flow_style=False, sort_keys=False)
+
+        print("hermes-agents: pruned undeclared mcp_servers: " + ", ".join(sorted(stale)))
+        '';
+
     # Shell hooks need consent per (event, command) pair, and a gateway has no
     # TTY to ask on -- an unapproved hook is silently skipped, which for this
     # hook means PDFs quietly go back to the text-layer extractor.  The
@@ -456,6 +514,20 @@
             lib.mkIf (agent.profiles != {})
                 (lib.hm.dag.entryBefore [ "hermesAgentSetup" ]
                     (mkProfileCreateScript name agent));
+
+        # Drop mcp_servers this config no longer declares.  MUST run after
+        # hermesAgentSetup, which is what writes (merges) config.yaml -- the
+        # stale keys do not exist to prune until that has run.  See
+        # pruneMcpScript for why the merge alone cannot do this.
+        #
+        # Only the agent's top-level config.yaml needs it: sub-profile
+        # configs are installed with `install -D`, a full overwrite, so they
+        # are already exact.
+        home.activation.hermesPruneMcp = lib.hm.dag.entryAfter [ "hermesAgentSetup" ] ''
+            $DRY_RUN_CMD ${pruneMcpScript} \
+                ${lib.escapeShellArg "/home/${name}/.hermes/config.yaml"} \
+                ${lib.escapeShellArgs (lib.attrNames (cfg.mcpServers // agent.mcpServers))}
+        '';
     };
 
     # Create each declared sub-profile with Hermes' OWN `profile create`,
