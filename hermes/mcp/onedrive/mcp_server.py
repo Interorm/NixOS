@@ -63,6 +63,22 @@ Graph endpoint quirks (verified against this app's token, 2026-09-17):
     still retries transient 401/429 and network errors (never 404 —
     itemNotFound is a definitive answer).
 
+Path encoding contract (single source of truth, 2026-09-18):
+  * Tools pass item paths with RAW names (spaces, umlauts, quotes as-is) OR
+    already percent-encoded — both forms are accepted. api() is the ONLY
+    stage that encodes: it applies urllib.parse.quote(path, safe="/:%")
+    exactly once to the path component before building the request.
+      - safe="/" keeps "/" as the segment separator.
+      - safe=":" preserves Microsoft's /me/drive/root:/name: drive-item
+        syntax (the ":" delimiters must survive verbatim).
+      - safe="%" means an already-encoded "%20" passes through UNCHANGED —
+        no double-encoding. Callers must NOT pre-quote beyond what they
+        received, and NO other stage may re-encode (a second quote would
+        turn "%20" into "%2520" and break $top/$search values too).
+  * Query strings are built by callers with raw OData parameters ($top,
+    $search...) and passed through unchanged (_encode_query is a deliberate
+    identity); only the PATH component is encoded, in api().
+
 Usage:
     python3 mcp_server.py            # reads stdin, writes stdout (NDJSON)
 """
@@ -326,14 +342,18 @@ def ensure_login():
 
 # ---------- graph ----------
 def _encode_query(query):
-    """Pass the query string through exactly as the caller built it.
+    """Deliberate identity: pass the query string through EXACTLY as the
+    caller built it.
 
-    Callers percent-encode query values exactly once with
-    urllib.parse.quote(raw_value, safe=""). Graph accepts a literal '$'
-    as the OData parameter delimiter. Re-encoding here (the draft's
+    Query strings carry raw OData parameters ($top, $search...) that Graph
+    expects verbatim, so this stage does NOT encode. Encoding of the request
+    happens in api(), and ONLY on the path component
+    (quote(path, safe="/:%")) — exactly once. Re-encoding here (the draft's
     quote(query, safe="=&")) double-encoded already-encoded values —
     $search=%27q%27 arrived at Graph as the literal string "%27q%27"
     and failed with "Syntax error: character '%' is not valid at position 0".
+    Keep this a no-op: it documents where query ownership lives (callers),
+    and its removal would be a trap inviting a second quote stage.
     """
     return query
 
@@ -346,8 +366,14 @@ def api(method, path, body=None, raw=False, raw_body=None,
     Transient 401/429 and network errors are retried (Graph routing flakes);
     deterministic 4xx (400, 404 itemNotFound, 403) are never retried.
     """
-    from urllib.parse import urlsplit, urlunsplit
+    from urllib.parse import urlsplit, urlunsplit, quote
     parts = urlsplit(path)
+    # THE single encoding stage: percent-encode the path component exactly
+    # once (spaces, umlauts, ...). safe="/:%" keeps "/" as the separator,
+    # preserves :/name:-form drive-item syntax, and leaves an existing "%20"
+    # untouched — so both raw and pre-encoded input forms work, and nothing
+    # is ever double-encoded. Callers pass paths verbatim and never quote.
+    parts = parts._replace(path=quote(parts.path, safe="/:%"))
     path = urlunsplit((parts.scheme, parts.netloc, parts.path,
                        _encode_query(parts.query), ""))
     data = raw_body if raw_body is not None else (
@@ -429,7 +455,14 @@ def t_list(args):
     if pre is not None:
         return pre if isinstance(pre, list) else [pre[0]]
     path = args.get("path", "/me/drive/special/approot").rstrip("/")
-    status, res = api("GET", f"{path}/children?$top=200")
+    # A path that already carries a query (or is a full drive-item URL form)
+    # must NOT get another /children?$top appended — that would produce two
+    # query sections and Graph 400s ("Invalid value '200/children?$top=200'
+    # for $top"). Tools pass clean item paths; the query is built here once.
+    if "?" in path:
+        status, res = api("GET", path)
+    else:
+        status, res = api("GET", f"{path}/children?$top=200")
     if status >= 300:
         return _err(res)
     items = res.get("value", [])
@@ -516,8 +549,12 @@ def t_search(args):
         return _err({"error": "query is required"})
     scope = args.get("scope", "/me/drive/special/approot").rstrip("/")
     # $search is a no-op on this drive (verified: returns children unfiltered),
-    # so filter the listed children client-side.
-    status, res = api("GET", f"{scope}/children?$top=200")
+    # so filter the listed children client-side. Same no-blind-append rule as
+    # t_list: a scope that already carries a query must not get a second one.
+    if "?" in scope:
+        status, res = api("GET", scope)
+    else:
+        status, res = api("GET", f"{scope}/children?$top=200")
     if status >= 300:
         return _err(res)
     items = [it for it in res.get("value", []) if q in it.get("name", "").lower()]
@@ -550,7 +587,12 @@ TOOL_DEFS = {
         "description": "List items in a folder (default: the app folder). Args: path (e.g. /me/drive/root).",
         "inputSchema": {
             "type": "object",
-            "properties": {"path": {"type": "string", "description": "Drive path, e.g. /me/drive/root"}},
+            "properties": {"path": {"type": "string",
+                                      "description": "Drive path, e.g. /me/drive/root. "
+                                                     "Raw names (spaces, umlauts) or "
+                                                     "percent-encoded are both accepted; "
+                                                     "the server percent-encodes before "
+                                                     "the Graph call."}},
         },
         "impl": t_list,
     },
@@ -558,7 +600,12 @@ TOOL_DEFS = {
         "description": "Read a file's content (text). Args: path (full item path).",
         "inputSchema": {
             "type": "object",
-            "properties": {"path": {"type": "string", "description": "Item path, e.g. /me/drive/special/approot/note.txt"}},
+            "properties": {"path": {"type": "string",
+                                      "description": "Item path, e.g. "
+                                                     "/me/drive/special/approot/note.txt. "
+                                                     "Raw names or percent-encoded; the "
+                                                     "server percent-encodes before the "
+                                                     "Graph call."}},
             "required": ["path"],
         },
         "impl": t_read,
@@ -568,7 +615,10 @@ TOOL_DEFS = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Target item path"},
+                "path": {"type": "string",
+                          "description": "Target item path. Raw names or "
+                                         "percent-encoded; the server "
+                                         "percent-encodes before the Graph call."},
                 "content": {"type": "string", "description": "Text content"},
                 "content_base64": {"type": "string", "description": "Base64 content (binary)"},
             },
@@ -584,7 +634,11 @@ TOOL_DEFS = {
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
-                "scope": {"type": "string", "description": "Folder to search, default the app folder"},
+                "scope": {"type": "string",
+                           "description": "Folder to search, default the app "
+                                          "folder. Raw names or percent-encoded; "
+                                          "the server percent-encodes before the "
+                                          "Graph call."},
             },
             "required": ["query"],
         },
@@ -594,7 +648,11 @@ TOOL_DEFS = {
         "description": "Delete an item. Args: path.",
         "inputSchema": {
             "type": "object",
-            "properties": {"path": {"type": "string"}},
+            "properties": {
+                "path": {"type": "string",
+                          "description": "Item path. Raw names or percent-encoded; "
+                                         "the server percent-encodes before the "
+                                         "Graph call."}},
             "required": ["path"],
         },
         "impl": t_delete,
@@ -620,7 +678,7 @@ def handle(msg):
             "protocolVersion": PROTOCOL_VERSION,
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             "capabilities": {"tools": {}},
-            "instructions": "Read/search the whole OneDrive; writes are confined to the app folder by Microsoft. If no token exists, any tool starts the device-code login and returns the URL + code.",
+            "instructions": "Read/search the whole OneDrive; writes are confined to the app folder by Microsoft. If no token exists, any tool starts the device-code login and returns the URL + code. Paths may contain spaces or special characters and are passed raw; the server percent-encodes them exactly once before the Graph call (already-encoded paths are left untouched).",
         }
 
     if method == "notifications/initialized":
