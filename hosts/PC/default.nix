@@ -19,6 +19,11 @@
         ../../modules/apps/default_gaming.nix
 
         ../../modules/llama.cpp/default_workstation.nix
+
+        # Local image/video gen model store (declarations only; pulls are
+        # explicit via nix build .#imageGenModels.<name>). ComfyUI service +
+        # presets follow in the same PR (modules/image-gen/).
+        ../../modules/image-gen/model-store.nix
     ];
 
     # Was `network.hostName` -- no such option path exists.
