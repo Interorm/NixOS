@@ -19,6 +19,7 @@
         ../../modules/apps/default_gaming.nix
 
         ../../modules/llama.cpp/default_workstation.nix
+        ../../modules/image-gen/comfyui.nix
     ];
 
     # Was `network.hostName` -- no such option path exists.

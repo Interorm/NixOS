@@ -24,15 +24,43 @@
       # Darwin deps are dead weight on a Linux-only fleet.
       inputs.darwin.follows = "";
     };
+
+    # ComfyUI source, tracked as an input instead of a version+hash pinned
+    # inside the derivation (see overlays/comfyui.nix).  `flake = false`
+    # because upstream is a plain Python repo, not a flake.
+    #
+    # Pointed at the newest upstream *release* tag.  To move to whatever is
+    # newest at that moment:
+    #
+    #     nix flake update comfyui-src          # -> newest release tag
+    #
+    # flake.lock records the exact commit, so every rebuild stays
+    # reproducible and the jump is visible in the lock diff during review.
+    #
+    # NOTE: `ref` is the release tag, not `master`.  Upstream's master is
+    # their development branch and regularly carries unreleased work; the
+    # tag is what they call stable.  Change `ref` to the newer tag (or to
+    # `master` if you want the true bleeding edge) and re-run the update.
+    comfyui-src = {
+      url = "github:Comfy-Org/ComfyUI/v0.37.0";
+      flake = false;
+    };
   };
 
   outputs = { self, nixpkgs, home-manager, ... }@inputs:
     let
       system = "x86_64-linux";
 
+      # The overlay needs the ComfyUI source; everything else about it is
+      # derived (version is read out of the tree, deps come from nixpkgs).
+      comfyuiOverlay = import ./overlays/comfyui.nix {
+        src = inputs.comfyui-src;
+      };
+
       pkgs = import nixpkgs {
         inherit system;
         config.allowUnfree = true;
+        overlays = [ comfyuiOverlay ];
       };
 
       pythonEnvs = import ./modules/python-envs/env_ML.nix { inherit pkgs; };
@@ -45,6 +73,12 @@
 
           modules = [
             ./hosts/PC/default.nix
+
+            # The overlay has to reach the system's pkgs, not just the
+            # flake's `packages` output -- `nixosSystem` builds its own
+            # pkgs, so without this `services.comfyui.package` would
+            # resolve to nixpkgs' (older) comfyui.
+            { nixpkgs.overlays = [ comfyuiOverlay ]; }
 
             # Two separate list elements: the home-manager NixOS module, and an
             # inline module configuring it.
@@ -82,7 +116,13 @@
       };
 
       # `nix build .#env-ml` -- also what per-project flakes extend.
-      packages.${system}.env-ml = pythonEnvs.base;
+      # `nix build .#comfyui` -- overlaid ComfyUI (overlays/comfyui.nix).
+      # One attrset: `packages.${system}` may only be defined once.
+      packages.${system} = {
+        env-ml               = pythonEnvs.base;
+        comfyui              = pkgs.comfyui;
+        comfyui-with-manager = pkgs.comfyui-with-manager;
+      };
 
       lib.env_ML = pythonEnvs;
     };
