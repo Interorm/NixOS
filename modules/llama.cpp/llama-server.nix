@@ -122,7 +122,8 @@ in {
 
                 "--max-context" "240000"
                 "--kv-capacity" "auto"
-                "--kv-dtype" "fp8"
+                "--kv-dtype" "nvfp4"
+                "--no-cuda-graph"
 
                 "--max-concurrency" "2"
 
