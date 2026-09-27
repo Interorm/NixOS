@@ -72,6 +72,39 @@ in {
             # topology, like modelBaseUrl -- and an agent that silently had
             # it off would have dead cron jobs with no visible cause.
             gateway.multiplex_profiles = true;
+
+            # Vision auxiliary model for the whole fleet.  Every agent's main
+            # model is text-only (Qwen3.8-27B), so an image attached to a
+            # session has no describer and the feature is dead: hermes' aux
+            # resolver defaults to provider "auto" + empty model, and the
+            # fleet's only vision-capable model is Gemma4-E4B.  Pinning it
+            # here -- the same attrset that carries the fleet stt/tts pins --
+            # makes "every image needs a describer" a fleet property: one
+            # switch, single source of truth, instead of a per-agent copy.
+            #
+            # base_url is the gateway (modelBaseUrl), not the vision
+            # backend's :8070 directly: the gateway is this host's
+            # model-addressing topology -- it routes by model id, so
+            # "Gemma4-E4B" reaches the chat endpoint while Qwen keeps the
+            # others.  Deriving it from modelBaseUrl (the exact value the
+            # module's own `model` block already writes at hermes.nix:414)
+            # keeps the gateway port declared once.
+            #
+            # api_key: the gateway ignores the bearer value
+            # (hermes.nix:657); the literal ${OPENAI_API_KEY} placeholder is
+            # expanded by hermes from the agent's .env at runtime, exactly
+            # like the main model block.  Verified against the running
+            # hermes-agent source: _resolve_task_provider_model
+            # (agent/auxiliary_client.py) resolves provider "custom" +
+            # base_url + api_key to a working custom endpoint, and
+            # _expand_env_vars (hermes_cli/config.py) expands ${VAR} in every
+            # string value at load time.
+            auxiliary.vision = {
+                provider = "custom";
+                model = "Gemma4-E4B";
+                base_url = config.services.hermes-agents.modelBaseUrl;
+                api_key = "\${OPENAI_API_KEY}";
+            };
         };
     };
 }
