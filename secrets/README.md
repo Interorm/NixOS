@@ -134,16 +134,27 @@ sudo nixos-rebuild switch --flake .#homeserver   # or push + rebuild on the box
 
 ### FinTS (online banking) credentials
 
-The FinTS MCP server reads its three secret values from this **same** file —
-there is deliberately no separate banking secret, because `hermes-karl.age`
-already is "the credentials Karl's agent may use", it is already encrypted to
-Karl + the host only, and a second file would be a second thing to rekey.
-The public facts (BLZ `25650106`, the FinTS endpoint) are declared in Nix, in
-`hermes/mcp/fints.nix`, rather than hidden in ciphertext.
+The FinTS MCP server reads its **five** configuration values from this **same**
+file — there is deliberately no separate banking secret, because
+`hermes-karl.age` already is "the credentials Karl's agent may use", it is
+already encrypted to Karl + the host only, and a second file would be a second
+thing to rekey.
 
-Add three lines to the file opened by the command above:
+Two of the five — `FINTS_BLZ` and `FINTS_ENDPOINT` — are **not secret**; they
+are published facts about the bank. They live here anyway, because this file is
+the one place **both** consumers read: Hermes resolves `${VAR}` from it when it
+spawns the MCP server, and `fints-enroll` sources it from a login shell. Stating
+them in Nix instead put them in the server's environment only, so `fints-enroll`
+— the single bootstrap step of the whole feature — died with `missing required
+env var(s): FINTS_BLZ, FINTS_ENDPOINT` on an otherwise correct box. One
+declaration means the server and the enrolment CLI can never disagree, and a
+future account or bank change is one `agenix -e` away with no rebuild.
+
+Add five lines to the file opened by the command above:
 
 ```
+FINTS_BLZ=25650106
+FINTS_ENDPOINT=https://banking-ni3.s-fints-pt-ni.de/fints30
 FINTS_USER_ID=<Anmeldename>
 FINTS_PIN=<online-banking PIN>
 FINTS_PRODUCT_ID=<FinTS Produkt-ID>
@@ -151,12 +162,22 @@ FINTS_PRODUCT_ID=<FinTS Produkt-ID>
 
 | Variable | What it is | Watch out |
 |---|---|---|
+| `FINTS_BLZ` | Bankleitzahl of Sparkasse Nienburg | Not secret. `25650106` — the BLZ, **not** the BIC (`NOLADE21NIB`) and not the first eight digits of the IBAN's account part. |
+| `FINTS_ENDPOINT` | The bank's FinTS 3.0 PIN/TAN URL | Not secret. Must be the `…/fints30` PIN/TAN endpoint, not the online-banking web login URL. |
 | `FINTS_USER_ID` | The **Anmeldename** — the login name typed into the Sparkasse online-banking form | **Not** the account number, not the IBAN, not the Legitimations-ID. Using the account number is the single most common FinTS setup mistake and the bank's error message does not say so. |
 | `FINTS_PIN` | The online-banking PIN | The digits typed in the login form, **not** a TAN. A TAN is single-use and comes from the S-pushTAN app. The server never retries a rejected PIN — repeats lock the online banking. |
 | `FINTS_PRODUCT_ID` | FinTS Produkt-ID identifying the client software | python-fints ≥ 4 has **no default** and raises without one. Try a placeholder string first; if the bank rejects it, register a real one (free) at <https://www.hbci-zka.de/register/prod_register.htm>. Changing it later is a one-line `.env` edit, no code change. |
 
 No value may contain a line break, and quote it if it contains shell
 metacharacters — `fints-enroll` sources this file like any env file.
+
+Leave a line out and you get a structured setup error naming exactly what is
+missing, not a stack trace:
+
+```
+SETUP ERROR: missing required env var(s): FINTS_BLZ
+  Set FINTS_BLZ in the agenix-encrypted ~/.hermes/.env (the nixos card owns that wiring).
+```
 
 Then, once, on the homeserver (this is the one interactive bootstrap; it is
 **not** repeated after every rebuild):

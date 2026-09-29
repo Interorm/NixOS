@@ -1,5 +1,5 @@
-# FinTS / HBCI MCP server for Karl's Sparkasse Nienburg Girokonto (BLZ
-# 25650106) — STRICTLY READ-ONLY.
+# FinTS / HBCI MCP server for Karl's Sparkasse Nienburg Girokonto —
+# STRICTLY READ-ONLY.
 #
 # This file is only the registry snippet hermes/lib.nix exposes as `mcp.fints`
 # (see hermes/users/karl.nix).  The application itself is built by
@@ -52,12 +52,23 @@
 # Created declaratively by a tmpfiles rule in hermes/users/karl.nix, outside
 # the Nix store and outside the repo.
 #
-# CREDENTIALS: the three genuinely secret values come from the agent's
+# CREDENTIALS AND BANK CONFIG — one source of truth, read identically by both
+# consumers.  All five values the FinTS stack needs come from the agent's
 # agenix-encrypted ~/.hermes/.env (/run/agenix/hermes-karl, 0400, owned by
-# karl), which Hermes loads before resolving ${VAR} in the env block below —
-# the same mechanism ONEDRIVE_CLIENT_ID uses.  The BLZ and the endpoint are
-# published facts about the bank, so they are declared here in Nix rather than
-# hidden in ciphertext; only what is actually secret goes in agenix.
+# karl): Hermes loads that file and resolves ${VAR} in the env block below
+# before spawning the server, and `fints-enroll` sources the very same file
+# from a login shell.  The same mechanism ONEDRIVE_CLIENT_ID uses.
+#
+# Why the BLZ and the endpoint live there too, although neither is secret:
+# they were previously stated as Nix literals here, which meant the MCP server
+# got them and `fints-enroll` — the single bootstrap step of the whole feature
+# — did not, because the env block is Hermes' spawn environment and is neither
+# the user's shell environment nor part of .env.  A correctly configured box
+# therefore failed with `missing required env var(s): FINTS_BLZ,
+# FINTS_ENDPOINT`.  Declaring them once, in .env, is what makes the server and
+# the enrolment CLI provably unable to disagree, and makes a future account or
+# bank change one `agenix -e` away with no rebuild.  See secrets/README.md for
+# the five-line walkthrough.
 { pkgs, ... }:
 let
     app = import ./fints/package.nix { inherit pkgs; };
@@ -66,9 +77,6 @@ in {
     args = [ ];
 
     env = {
-        FINTS_BLZ = "25650106";
-        FINTS_ENDPOINT = "https://banking-ni3.s-fints-pt-ni.de/fints30";
-
         # What the server tells the model (and Karl) to run when the bank
         # wants a fresh pushTAN.  Packaged, there is no enroll.py in anyone's
         # working directory -- the script's own default instruction, `python3
@@ -92,12 +100,20 @@ in {
         HERMES_GATEWAY = "http://127.0.0.1:8080/v1";
 
         # Written literally (note the backslash) and resolved by Hermes from
-        # .env at runtime, so no secret ever reaches the world-readable
-        # /nix/store.  FINTS_USER_ID is the *Anmeldename* (online-banking
-        # login name), NOT the account number or the IBAN.  FINTS_PRODUCT_ID
-        # is the FinTS Produkt-ID: python-fints >= 4 makes it a mandatory
-        # constructor argument with no default, so it is required even though
-        # it is only semi-secret.  See secrets/README.md and hermes/mcp/fints/README.md.
+        # .env at runtime, so nothing here reaches the world-readable
+        # /nix/store -- which is required for the three secrets and is what
+        # keeps the other two from becoming a second declaration.
+        #
+        # FINTS_USER_ID is the *Anmeldename* (online-banking login name), NOT
+        # the account number or the IBAN.  FINTS_PRODUCT_ID is the FinTS
+        # Produkt-ID: python-fints >= 4 makes it a mandatory constructor
+        # argument with no default, so it is required even though it is only
+        # semi-secret.  FINTS_BLZ and FINTS_ENDPOINT are published facts about
+        # the bank and are not secret at all; they are here because this is
+        # the one place both the server and `fints-enroll` read.  See
+        # secrets/README.md and hermes/mcp/fints/README.md.
+        FINTS_BLZ = "\${FINTS_BLZ}";
+        FINTS_ENDPOINT = "\${FINTS_ENDPOINT}";
         FINTS_USER_ID = "\${FINTS_USER_ID}";
         FINTS_PIN = "\${FINTS_PIN}";
         FINTS_PRODUCT_ID = "\${FINTS_PRODUCT_ID}";
