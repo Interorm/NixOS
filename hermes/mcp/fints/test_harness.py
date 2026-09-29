@@ -551,25 +551,56 @@ def s5_no_write_capability():
           "get_sepa_accounts" in used and "get_transactions" in used,
           f"client calls found: {', '.join(used)}")
 
-    # And the live tool list must expose no mutating tool.
+    # And the live tool list must expose no tool that could move money.
+    # NOTE (labeling card): this check was deliberately NARROWED from a generic
+    # write-verb ban to a BANK-operation ban. finance_relabel/add_rule/
+    # delete_rule write labels, rules and proposals in the LOCAL SQLite file —
+    # a DB-local annotation is not a bank operation, and forbidding the word
+    # "label" would have made the learning loop unimplementable. What must
+    # remain impossible is a *payment*, and that is what is asserted here (plus
+    # the FinTS-surface check above, which is untouched).
     import mcp_server
     names = sorted(mcp_server.TOOL_DEFS)
-    mutating = [n for n in names if any(w in n for w in
-                ("transfer", "send", "pay", "write", "delete", "update",
-                 "insert", "set_", "label"))]
-    check("no mutating tool is exposed over MCP", not mutating,
+    BANK_WRITE_VERBS = ("transfer", "send", "pay", "remit", "ueberweis",
+                        "überweis", "standing_order", "dauerauftrag",
+                        "sepa_debit", "direct_debit")
+    mutating = [n for n in names if any(w in n.lower() for w in BANK_WRITE_VERBS)]
+    check("no tool that could move money is exposed over MCP", not mutating,
           f"tools: {', '.join(names)}")
 
-    # db.py's write surface must be exactly the three known functions.
+    # The labeling tools must all be namespaced as local finance_* operations,
+    # never fints_* (which is the bank-facing prefix).
+    local_writers = ("finance_relabel", "finance_add_rule",
+                     "finance_delete_rule", "finance_accept_proposal",
+                     "finance_reject_proposal")
+    check("the labeling write tools exist and are all finance_* (DB-local), "
+          "not fints_* (bank-facing)",
+          all(t in names for t in local_writers)
+          and not any(t.startswith("fints_") for t in local_writers),
+          f"local write tools: {', '.join(t for t in local_writers if t in names)}")
+    check("the bank-facing surface is still exactly fints_status + fints_sync",
+          sorted(n for n in names if n.startswith("fints_"))
+          == ["fints_status", "fints_sync"],
+          f"fints_* tools: {[n for n in names if n.startswith('fints_')]}")
+
+    # db.py's write surface must be exactly the known functions.
     import inspect
     writers = [n for n, o in vars(db).items()
                if inspect.isfunction(o) and
                any(w in inspect.getsource(o).upper()
                    for w in ("INSERT ", "UPDATE ", "DELETE ", "DROP "))]
-    check("db.py write surface is exactly migrate/seed/insert/sync_start/sync_finish",
-          set(writers) <= {"migrate", "seed_categories", "insert_transactions",
-                           "sync_start", "sync_finish"},
-          f"writers: {sorted(writers)}")
+    allowed_writers = {
+        # schema v1: sync + ingest
+        "migrate", "seed_categories", "insert_transactions",
+        "sync_start", "sync_finish",
+        # schema v2: labeling. All local-only: labels, rules, proposals.
+        "set_label", "bump_hit_count", "add_rule", "delete_rule",
+        "record_proposal", "decide_proposal",
+    }
+    check("db.py write surface is exactly the known sync + labeling writers",
+          set(writers) <= allowed_writers,
+          f"unexpected writers: {sorted(set(writers) - allowed_writers)}"
+          if set(writers) - allowed_writers else f"writers: {sorted(writers)}")
 
 
 def s6_mcp_protocol(tmp, expected_rows):
@@ -588,9 +619,16 @@ def s6_mcp_protocol(tmp, expected_rows):
 
         listing = c.send("tools/list")
         names = [t["name"] for t in (listing or {}).get("tools", [])]
+        # The 6 original read tools must still be present and in order; the
+        # labeling card appended 8 more (asserted in section 9).
         want = ["fints_status", "fints_sync", "finance_query",
                 "finance_summary", "finance_uncategorized", "finance_categories"]
-        check("exposes the 6 expected tools", names == want, ", ".join(names))
+        check("exposes the 6 original read tools first, in order",
+              names[:len(want)] == want, ", ".join(names))
+        check("every tool has a description and an inputSchema",
+              all(t.get("description") and isinstance(t.get("inputSchema"), dict)
+                  for t in (listing or {}).get("tools", [])),
+              f"{len(names)} tools total")
 
         err, st = c.call("fints_status")
         check("fints_status works WITHOUT contacting the bank",
@@ -780,6 +818,281 @@ def s8_live():
         c.close()
 
 
+def s9_labeling(tmp):
+    """Offline tests of the categorization engine — NO network, NO model.
+
+    Everything here is deterministic: the rules pass, the promotion guard, the
+    response parser/validator and the proposal queue are pure functions over a
+    fixture DB. The LIVE accuracy measurement against Gemma4-E4B deliberately
+    lives in eval_labeling.py instead, so this suite stays hermetic.
+    """
+    section("9. labeling engine (offline: rules, promotion, validation)")
+    import categorize
+
+    dbp = os.path.join(tmp, "label", "finance.db")
+    os.environ["FINTS_DB"] = dbp
+    db.migrate()
+    con = db.connect()
+    check("migrate() is idempotent and lands on schema v2",
+          db.schema_version(con) == 2, f"user_version={db.schema_version(con)}")
+
+    sys.path.insert(0, os.path.join(HERE, "fixtures"))
+    import student_transactions as fx
+    n = db.insert_transactions(con, fx.as_rows())
+    check(f"fixture set has >= 40 transactions", n >= 40, f"inserted={n}")
+
+    # --- rules pass ---
+    db.add_rule(con, "counterparty_iban", "DE91500105175711234567",
+                "Lebensmittel", priority=10, source="test")
+    db.add_rule(con, "purpose_regex", r"SPOTIFY", "Abos & Digital",
+                priority=20, source="test")
+    rows = db.uncategorized(con, limit=500)
+    labeled, remaining = categorize.apply_rules(con, rows)
+    check("the rules pass labeled exactly the matching rows",
+          len(labeled) == 5, f"labeled={len(labeled)} remaining={len(remaining)}")
+    check("a rule label is written with label_source='rule'",
+          con.execute("SELECT COUNT(*) FROM transactions WHERE "
+                      "label_source='rule'").fetchone()[0] == len(labeled))
+    check("hit_count was incremented per match",
+          sum(r["hit_count"] for r in db.rules(con)) == len(labeled),
+          f"hit counts: {[(r['pattern'][:18], r['hit_count']) for r in db.rules(con)]}")
+    check("rows the rules missed are exactly the LLM pass's input",
+          len(remaining) == len(rows) - len(labeled))
+
+    # Priority order decides, not insertion order.
+    r_lo = {"match_type": "purpose_regex", "pattern": "REWE", "category": "A",
+            "priority": 5, "id": 1}
+    r_hi = {"match_type": "purpose_regex", "pattern": "REWE", "category": "B",
+            "priority": 90, "id": 2}
+    tx = {"purpose": "REWE SAGT DANKE", "counterparty_name": None,
+          "counterparty_iban": None, "posting_text": None}
+    check("first match by ascending priority wins",
+          categorize.first_matching_rule([r_lo, r_hi], tx)["category"] == "A")
+
+    # --- response parsing (the real shapes Gemma produces) ---
+    fenced = '```json\n[{"id": 1, "category": "Lebensmittel", "confidence": 1.0,\n' \
+             ' "reasoning": "x", "proposed_new_category": null}]\n```'
+    check("a ```json-fenced reply is parsed (Gemma always fences)",
+          categorize.extract_json_array(fenced) is not None,
+          categorize.extract_json_array(fenced))
+    chatty = 'Hier ist das Ergebnis:\n[{"id": 2, "category": null}]\nViel Erfolg!'
+    check("a reply with prose around the array is still parsed",
+          (categorize.extract_json_array(chatty) or [{}])[0].get("id") == 2)
+    check("an unparseable reply returns None rather than raising",
+          categorize.extract_json_array("es tut mir leid") is None)
+
+    allowed = {"Lebensmittel", "Bargeld"}
+    acc, props, fails = categorize.validate_items(
+        [{"id": 1, "category": "Lebensmittel", "confidence": 0.9},
+         {"id": 2, "category": "Erfundene Kategorie", "confidence": 0.9},
+         {"id": 3, "category": None, "confidence": 0.2,
+          "proposed_new_category": {"name": "Friseur", "rationale": "kein Treffer"}}],
+        allowed, {1, 2, 3})
+    check("a hallucinated category is a validation FAILURE, never a label",
+          len(acc) == 1 and acc[0][0] == 1
+          and any("not in the allowed list" in why for _i, why in fails),
+          f"accepted={acc} failures={fails}")
+    check("a proposal is captured separately from the accepted labels",
+          props == [(3, "Friseur", "kein Treffer")], props)
+    _acc, _p, fails2 = categorize.validate_items(
+        [{"id": 1, "category": "Lebensmittel", "confidence": 1.0}], allowed,
+        {1, 2})
+    check("a transaction missing from the reply is reported as a failure",
+          any("missing from the model reply" in why for _i, why in fails2), fails2)
+
+    # --- proposal queue: suggestion, not auto-insert ---
+    before = {c["name"] for c in db.categories(con)}
+    db.record_proposal(con, "Friseur & Koerperpflege", "kein Treffer", [46, 47])
+    db.record_proposal(con, "Friseur & Koerperpflege", "kein Treffer", [47, 12])
+    pending = db.proposals(con, status="pending")
+    check("a proposal is queued, NOT inserted into the taxonomy",
+          len(pending) == 1
+          and {c["name"] for c in db.categories(con)} == before,
+          f"pending={[(p['name'], p['count']) for p in pending]}")
+    check("re-proposing merges example ids instead of duplicating",
+          pending[0]["count"] == 3 and sorted(pending[0]["example_ids"]) == [12, 46, 47],
+          pending[0]["example_ids"])
+    db.decide_proposal(con, "Friseur & Koerperpflege", "accepted")
+    check("accepting a proposal adds it to the taxonomy (so the next prompt "
+          "includes it automatically)",
+          "Friseur & Koerperpflege" in {c["name"] for c in db.categories(con)}
+          and not db.proposals(con, status="pending"))
+
+    # --- rule derivation prefers the most specific safe key ---
+    d = categorize.derive_rule({"counterparty_iban": "DE123", 
+                                "counterparty_name": "LIDL", "purpose": "X"})
+    check("derive_rule prefers counterparty_iban", d["match_type"] == "counterparty_iban")
+    d = categorize.derive_rule({"counterparty_iban": None,
+                                "counterparty_name": "LIDL SAGT DANKE",
+                                "purpose": "X"})
+    check("then counterparty_exact", d["match_type"] == "counterparty_exact")
+    d = categorize.derive_rule({"counterparty_iban": None, "counterparty_name": "",
+                                "purpose": "DANKE, IHR STUDENTENWERK KARTENZAHLUNG"})
+    check("then a purpose_regex anchored on a distinctive token, with the "
+          "boilerplate skipped", d["match_type"] == "purpose_regex"
+          and "STUDENTENWERK" in d["pattern"], d["pattern"])
+    check("the derived regex is an ESCAPED literal (no accidental metachars)",
+          categorize.derive_rule(
+              {"counterparty_iban": None, "counterparty_name": None,
+               "purpose": "FOO B.A.R-BAZ"})["pattern"].count("\\") > 0,
+          categorize.derive_rule({"counterparty_iban": None,
+                                  "counterparty_name": None,
+                                  "purpose": "FOO B.A.R-BAZ"})["pattern"])
+    check("a row with nothing usable yields NO rule rather than a bad one",
+          categorize.derive_rule({"counterparty_iban": None,
+                                  "counterparty_name": None,
+                                  "purpose": "12345"}) is None)
+
+    # --- the over-broad / collision guard ---
+    lidl = con.execute("SELECT id FROM transactions WHERE counterparty_name="
+                       "'LIDL SAGT DANKE' LIMIT 1").fetchone()["id"]
+    res = categorize.relabel(con, lidl, "Bargeld", create_rule=True)
+    check("relabel() always applies the MANUAL label even when the rule is "
+          "refused", con.execute("SELECT category, label_source FROM "
+                                 "transactions WHERE id=?", (lidl,)
+                                 ).fetchone()["label_source"] == "manual")
+    check("promoting a rule that collides with rows labeled differently is "
+          "REFUSED", not res["rule"]["ok"]
+          and res["rule"]["error"] == "rule_would_collide",
+          res["rule"].get("message", "")[:200])
+
+    broad = categorize.dry_run_rule(con, "purpose_regex", "DANKE", "Bargeld")
+    check("a generic token that spans many merchants is flagged broad",
+          broad["broad"] and broad["distinct_counterparties"] > 2,
+          f"matched={broad['matched']} counterparties="
+          f"{broad['distinct_counterparties']} reasons={broad['broad_reasons']}")
+    specific = categorize.dry_run_rule(con, "counterparty_iban",
+                                       "DE12700202700099887766", "Abos & Digital")
+    check("a real merchant rule is NOT flagged broad", not specific["broad"],
+          f"matched={specific['matched']} reasons={specific['broad_reasons']}")
+
+    check("dry_run_rule never writes anything",
+          len(db.rules(con)) == 2, f"rules={len(db.rules(con))}")
+
+    # --- rule promotion end to end, offline ---
+    tk = con.execute("SELECT id FROM transactions WHERE counterparty_name="
+                     "'Techniker Krankenkasse' LIMIT 1").fetchone()["id"]
+    db.set_label(con, tk, "Sonstige Ausgaben", "llm", confidence=0.6)
+    other_tk = con.execute("SELECT id FROM transactions WHERE counterparty_name="
+                           "'Techniker Krankenkasse' AND id != ?", (tk,)).fetchone()["id"]
+    db.set_label(con, other_tk, "Sonstige Ausgaben", "llm", confidence=0.6)
+    out = categorize.relabel(con, tk, "Versicherung & Krankenkasse",
+                             create_rule=True, back_apply=True)
+    check("promotion succeeds for a specific merchant", out["rule"]["ok"],
+          f"{out['rule'].get('match_type')}={out['rule'].get('pattern')}")
+    check("back-apply corrected the OTHER llm-labeled row of that merchant",
+          con.execute("SELECT category, label_source FROM transactions WHERE "
+                      "id=?", (other_tk,)).fetchone()["category"]
+          == "Versicherung & Krankenkasse",
+          f"back_applied={out['rule']['back_applied']}")
+    check("a manual label is never overwritten by back-apply",
+          con.execute("SELECT label_source FROM transactions WHERE id=?",
+                      (tk,)).fetchone()["label_source"] == "manual")
+
+    # --- the privacy guard is code, not a comment ---
+    try:
+        categorize._assert_local("https://api.anthropic.com/v1")
+        check("a cloud gateway is refused", False, "no exception raised")
+    except RuntimeError as e:
+        check("a non-loopback gateway is refused outright", True, str(e)[:120])
+    for good in ("http://127.0.0.1:8080/v1", "http://localhost:8070/v1"):
+        categorize._assert_local(good)
+    check("loopback gateways are accepted", True,
+          "127.0.0.1 and localhost both pass")
+
+    payload = categorize.tx_payload(dict(con.execute(
+        "SELECT * FROM transactions WHERE counterparty_iban IS NOT NULL "
+        "LIMIT 1").fetchone()))
+    check("the prompt payload contains ONLY the 6 labeling fields — no IBAN, "
+          "no dedup hash, no raw blob",
+          set(payload) == {"id", "date", "amount_eur", "purpose",
+                           "counterparty", "posting_text"},
+          f"fields: {sorted(payload)}")
+    blob = json.dumps(payload, ensure_ascii=False)
+    check("no IBAN string can appear in a prompt payload",
+          "DE" not in blob.replace("DANKE", "") or "counterparty_iban" not in blob,
+          blob[:160])
+
+    # --- recurring detection ---
+    rec = categorize.find_recurring(con, min_occurrences=2)
+    names = {r["counterparty"] for r in rec}
+    check("monthly subscriptions are detected",
+          any("Spotify" in n for n in names) and any("Netflix" in n for n in names),
+          f"{len(rec)} groups: {sorted(n[:24] for n in names)}")
+    check("every detected group has a plausible cadence",
+          all(r["cadence"] in ("weekly", "biweekly", "monthly", "quarterly",
+                               "yearly") for r in rec))
+    check("one-off purchases are NOT reported as recurring",
+          not any("H & M" in n or "Cineplex" in n for n in names), sorted(names))
+
+    # --- the CLI, offline ---
+    con.close()
+    rc = subprocess.run(
+        [PY, os.path.join(HERE, "label.py"), "--rules-only", "--json"],
+        capture_output=True, text=True, timeout=60,
+        env={**os.environ, "FINTS_DB": dbp})
+    check("label.py --rules-only exits 0 and emits JSON without any network "
+          "call", rc.returncode == 0 and '"rules"' in rc.stdout,
+          (rc.stdout or rc.stderr)[:300])
+    rc2 = subprocess.run(
+        [PY, os.path.join(HERE, "label.py"), "--recurring"],
+        capture_output=True, text=True, timeout=60,
+        env={**os.environ, "FINTS_DB": dbp})
+    check("label.py --recurring works", rc2.returncode == 0
+          and "recurring charge" in rc2.stdout, (rc2.stdout or rc2.stderr)[:300])
+
+    # --- the new MCP tools over real stdio ---
+    c = Client(extra_env={"FINTS_DB": dbp})
+    try:
+        c.send("initialize", {"protocolVersion": "2024-11-05"})
+        listed = c.send("tools/list", {})
+        tools = {t["name"] for t in (listed or {}).get("tools", [])}
+        check("all 9 labeling tools are exposed over MCP",
+              {"finance_relabel", "finance_add_rule", "finance_list_rules",
+               "finance_delete_rule", "finance_proposals",
+               "finance_accept_proposal", "finance_reject_proposal",
+               "finance_recurring"} <= tools,
+              f"{len(tools)} tools: {sorted(tools)}")
+        err, r = c.call("finance_add_rule",
+                        {"match_type": "purpose_regex", "pattern": "DANKE",
+                         "category": "Bargeld"})
+        check("finance_add_rule REFUSES an over-broad pattern",
+              not r.get("ok") and r.get("error") in ("rule_too_broad",
+                                                     "rule_would_collide"),
+              r.get("message", "")[:200])
+        err, r = c.call("finance_add_rule",
+                        {"match_type": "purpose_regex", "pattern": "FLIXBUS",
+                         "category": "Transport & Semesterticket"})
+        check("finance_add_rule accepts a specific pattern", r.get("ok"),
+              json.dumps(r)[:160])
+        err, r = c.call("finance_add_rule",
+                        {"match_type": "purpose_regex", "pattern": "[unclosed",
+                         "category": "Bargeld"})
+        check("an invalid regex is a structured error, not a crash",
+              not r.get("ok") and r.get("error") == "bad_regex",
+              r.get("message", ""))
+        err, r = c.call("finance_relabel",
+                        {"transaction_id": 999999, "category": "Bargeld"})
+        check("relabelling a nonexistent row is a structured error",
+              not r.get("ok") and r.get("error") == "not_found", r.get("message"))
+        err, r = c.call("finance_relabel",
+                        {"transaction_id": lidl, "category": "Erfunden"})
+        check("relabelling to an unknown category is refused",
+              not r.get("ok") and r.get("error") == "unknown_category",
+              r.get("message"))
+        err, r = c.call("finance_recurring", {"min_occurrences": 2})
+        check("finance_recurring returns groups over MCP",
+              r.get("ok") and len(r.get("recurring", [])) >= 3,
+              f"{len(r.get('recurring', []))} groups")
+        err, r = c.call("finance_list_rules", {})
+        check("finance_list_rules returns the rules in priority order",
+              r.get("ok") and r["rules"] == sorted(
+                  r["rules"], key=lambda x: (x["priority"], x["id"])),
+              f"{len(r.get('rules', []))} rules")
+    finally:
+        c.close()
+
+
 def main():
     print(f"harness: {os.path.basename(__file__)}")
     print(f"server : {SERVER}")
@@ -808,6 +1121,7 @@ def main():
         if tail:
             print(f"\nserver stderr: {tail}")
         s7_failure_modes(tmp)
+        s9_labeling(tmp)
         s8_live()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

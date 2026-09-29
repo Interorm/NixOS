@@ -7,28 +7,42 @@ structured ``{"ok": false, "error": ..., "message": ...}`` returns instead of
 crashes, 0600 state files under an ``fcntl.flock`` guard, and secrets from env
 vars only.
 
-Tools (all read-only):
+Tools:
   fints_status            enrollment + 180-day re-auth countdown + DB stats.
                           Never contacts the bank.
   fints_sync              fetch the last N days and dedup-insert. The ONLY
                           tool that talks to the bank.
   finance_query           filtered SELECT over the DB (no SQL from callers).
   finance_summary         per-category aggregates + income/expense totals.
-  finance_uncategorized   rows with category IS NULL (input for the labeling card).
-  finance_categories      the seeded taxonomy (+ rules), for the labeling card.
+  finance_uncategorized   rows with category IS NULL (input for the labeling pass).
+  finance_categories      the seeded taxonomy (+ rules).
+  finance_relabel         correct a label and learn a rule from the correction.
+  finance_add_rule        add a rule by hand (dry-run + over-broad guard).
+  finance_list_rules      rules in evaluation order, with hit counts.
+  finance_delete_rule     remove a rule.
+  finance_proposals       LLM-proposed categories awaiting Karl's approval.
+  finance_accept_proposal accept a proposal into the taxonomy.
+  finance_reject_proposal reject a proposal.
+  finance_recurring       detected subscriptions/standing charges.
 
-SECURITY — read-only is a property of the CODE, not a flag:
+SECURITY — read-only *towards the bank* is a property of the CODE, not a flag:
   * The entire FinTS surface used by this package is ``get_sepa_accounts()``
     and ``get_transactions()`` (see fints_client.fetch_rows). No transfer, no
     standing order, no ``sepa_transfer``/HKCCS/HKDSE reference exists anywhere
     in this directory; test_harness.py section 5 asserts that by scanning the
     source and the live tool list.
-  * The DB mutation surface is ``insert_transactions`` + the ``sync_log``
-    rows. Every query tool opens the DB with a ``mode=ro`` URI, so a query
-    physically cannot write.
+  * The labeling tools (finance_relabel/add_rule/delete_rule/accept_proposal)
+    DO write — but only to local columns: category, label_source, rules and
+    category_proposals. No money can move through any of them. That is why
+    section 5's tool-name check bans bank verbs (transfer/send/pay/…) rather
+    than the word "write": a DB-local label is not a bank operation.
+  * Every purely-read tool still opens the DB with a ``mode=ro`` URI, so a
+    query physically cannot write.
   * The PIN is read from ``FINTS_PIN``, passed to the client, and never
     logged, stored, or returned; ``fints_client.scrub()`` is applied to every
     exception message that leaves the process.
+  * Transaction data reaches ONLY the local model fleet: categorize.py
+    refuses any non-loopback gateway host outright.
 
 Usage:
     python3 mcp_server.py            # reads stdin, writes stdout (NDJSON)
@@ -37,12 +51,14 @@ stdlib-only and works without it.
 """
 import json
 import os
+import re
 import sqlite3
 import sys
 from datetime import date, datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import categorize  # noqa: E402
 import db  # noqa: E402
 import fints_client as fc  # noqa: E402
 
@@ -356,6 +372,172 @@ def t_categories(args):
         con.close()
 
 
+# ---------- labeling tools (schema v2) ----------
+# These write to the LOCAL DB only — labels, rules and category proposals.
+# They are not a bank write path: no money can move through any of them, and
+# the FinTS surface is still exactly get_sepa_accounts/get_transactions.
+
+def _rw_or_err():
+    try:
+        return db.connect(), None
+    except sqlite3.OperationalError as e:
+        return None, fc.err("db_missing", f"cannot open {db.db_path()}: {e}")
+
+
+def t_relabel(args):
+    """Karl corrects one row; the system learns a rule so it never re-asks."""
+    tx_id = args.get("transaction_id")
+    category = args.get("category")
+    if tx_id is None or not category:
+        return fc.err("bad_argument",
+                      "transaction_id and category are both required")
+    con, cerr = _rw_or_err()
+    if con is None:
+        return cerr
+    try:
+        return categorize.relabel(
+            con, tx_id, category,
+            create_rule=bool(args.get("create_rule", True)),
+            back_apply=bool(args.get("back_apply", True)),
+            force=bool(args.get("force", False)))
+    except (ValueError, TypeError) as e:
+        return fc.err("bad_argument", str(e))
+    finally:
+        con.close()
+
+
+def t_add_rule(args):
+    """Add a rule by hand. Dry-runs it first and refuses an over-broad one."""
+    mt, pattern = args.get("match_type"), args.get("pattern")
+    category = args.get("category")
+    if not (mt and pattern and category):
+        return fc.err("bad_argument",
+                      "match_type, pattern and category are all required",
+                      match_types=list(db.MATCH_TYPES))
+    if mt not in db.MATCH_TYPES:
+        return fc.err("bad_argument", f"match_type must be one of {db.MATCH_TYPES}")
+    con, cerr = _rw_or_err()
+    if con is None:
+        return cerr
+    try:
+        known = {c["name"] for c in db.categories(con)}
+        if category not in known:
+            return fc.err("unknown_category",
+                          f"{category!r} is not a known category",
+                          known_categories=sorted(known))
+        if mt == "purpose_regex":
+            try:
+                re.compile(pattern)
+            except re.error as e:
+                return fc.err("bad_regex", f"invalid purpose_regex: {e}")
+        preview = categorize.dry_run_rule(con, mt, pattern, category)
+        force = bool(args.get("force", False))
+        if args.get("dry_run"):
+            return {"ok": True, "dry_run": True, "preview": preview}
+        if not force and preview["conflicts"]:
+            return fc.err("rule_would_collide",
+                          f"it also matches {len(preview['conflicts'])} row(s) "
+                          f"already labeled to a different category; pass "
+                          f"force=true if that is intended", preview=preview)
+        if not force and preview["broad"]:
+            return fc.err("rule_too_broad",
+                          "; ".join(preview["broad_reasons"]), preview=preview)
+        rule_id, created = db.add_rule(
+            con, mt, pattern, category,
+            priority=int(args.get("priority", 100)), source="manual")
+        return {"ok": True, "rule_id": rule_id, "created": created,
+                "preview": preview}
+    finally:
+        con.close()
+
+
+def t_list_rules(args):
+    con, cerr = _ro_or_err()
+    if con is None:
+        return cerr
+    try:
+        return {"ok": True, "rules": db.rules(con)}
+    finally:
+        con.close()
+
+
+def t_delete_rule(args):
+    rule_id = args.get("id", args.get("rule_id"))
+    if rule_id is None:
+        return fc.err("bad_argument", "id is required")
+    con, cerr = _rw_or_err()
+    if con is None:
+        return cerr
+    try:
+        n = db.delete_rule(con, rule_id)
+        if not n:
+            return fc.err("not_found", f"no rule with id {rule_id}")
+        return {"ok": True, "deleted": n,
+                "note": "existing labels are untouched; re-run label.py "
+                        "--reprocess-llm to re-decide affected rows"}
+    except (ValueError, TypeError) as e:
+        return fc.err("bad_argument", str(e))
+    finally:
+        con.close()
+
+
+def t_proposals(args):
+    con, cerr = _ro_or_err()
+    if con is None:
+        return cerr
+    try:
+        return {"ok": True,
+                "proposals": db.proposals(con, status=args.get("status",
+                                                               "pending"))}
+    finally:
+        con.close()
+
+
+def _decide(args, status):
+    name = args.get("name")
+    if not name:
+        return fc.err("bad_argument", "name is required")
+    con, cerr = _rw_or_err()
+    if con is None:
+        return cerr
+    try:
+        kind = args.get("kind", "expense")
+        if kind not in db.CATEGORY_KINDS:
+            return fc.err("bad_argument", f"kind must be one of {db.CATEGORY_KINDS}")
+        res = db.decide_proposal(con, name, status, kind=kind)
+        if res is None:
+            return fc.err("not_found", f"no proposal named {name!r}")
+        return {"ok": True, "name": name, "status": res,
+                "note": ("the category is now in the taxonomy and will appear "
+                         "in the next LLM prompt automatically"
+                         if status == "accepted" else
+                         "the proposal will no longer be surfaced")}
+    finally:
+        con.close()
+
+
+def t_accept_proposal(args):
+    return _decide(args, "accepted")
+
+
+def t_reject_proposal(args):
+    return _decide(args, "rejected")
+
+
+def t_recurring(args):
+    """Subscription/standing-charge detection — consumed by the weekly report."""
+    con, cerr = _ro_or_err()
+    if con is None:
+        return cerr
+    try:
+        return {"ok": True, "recurring": categorize.find_recurring(
+            con,
+            min_occurrences=int(args.get("min_occurrences", 3)),
+            amount_tolerance=float(args.get("amount_tolerance", 0.15)))}
+    finally:
+        con.close()
+
+
 TOOL_DEFS = {
     "fints_status": {
         "description": "FinTS enrollment status, days remaining until the "
@@ -424,6 +606,116 @@ TOOL_DEFS = {
                        "(read helper for the labeling pass).",
         "inputSchema": {"type": "object", "properties": {}},
         "impl": t_categories,
+    },
+    # --- labeling tools: they write LABELS, RULES and PROPOSALS in the local
+    # DB. None of them can move money; the bank surface stays read-only.
+    "finance_relabel": {
+        "description": "Correct one transaction's category and (by default) "
+                       "learn a rule from it, so the LLM is never asked about "
+                       "that merchant again. The candidate rule is dry-run "
+                       "first and REFUSED if it would collide with rows "
+                       "labeled differently or is too broad.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "transaction_id": {"type": "integer"},
+                "category": {"type": "string",
+                             "description": "must already exist in the taxonomy"},
+                "create_rule": {"type": "boolean",
+                                "description": "default true — promote a rule"},
+                "back_apply": {"type": "boolean",
+                               "description": "default true — also fix matching "
+                                              "rows still labeled by the LLM"},
+                "force": {"type": "boolean",
+                          "description": "override the over-broad/collision guard"},
+            },
+            "required": ["transaction_id", "category"],
+        },
+        "impl": t_relabel,
+    },
+    "finance_add_rule": {
+        "description": "Add a categorization rule by hand. Dry-runs it "
+                       "against the stored history first; pass dry_run=true "
+                       "to only preview what it would (re)label.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "match_type": {"type": "string",
+                               "enum": list(db.MATCH_TYPES)},
+                "pattern": {"type": "string"},
+                "category": {"type": "string"},
+                "priority": {"type": "integer",
+                             "description": "lower wins, default 100"},
+                "dry_run": {"type": "boolean"},
+                "force": {"type": "boolean"},
+            },
+            "required": ["match_type", "pattern", "category"],
+        },
+        "impl": t_add_rule,
+    },
+    "finance_list_rules": {
+        "description": "All categorization rules with their hit counts, in "
+                       "evaluation order (ascending priority).",
+        "inputSchema": {"type": "object", "properties": {}},
+        "impl": t_list_rules,
+    },
+    "finance_delete_rule": {
+        "description": "Remove a categorization rule by id. Existing labels "
+                       "are left untouched.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "integer"}},
+            "required": ["id"],
+        },
+        "impl": t_delete_rule,
+    },
+    "finance_proposals": {
+        "description": "Category names the LLM proposed because nothing fit. "
+                       "Suggestions only — they are NOT in the taxonomy until "
+                       "accepted.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"status": {"type": "string",
+                                      "enum": ["pending", "accepted", "rejected"]}},
+        },
+        "impl": t_proposals,
+    },
+    "finance_accept_proposal": {
+        "description": "Approve a proposed category: it enters the taxonomy "
+                       "and appears in every later LLM prompt automatically.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "kind": {"type": "string", "enum": list(db.CATEGORY_KINDS),
+                         "description": "default expense"},
+            },
+            "required": ["name"],
+        },
+        "impl": t_accept_proposal,
+    },
+    "finance_reject_proposal": {
+        "description": "Reject a proposed category so it stops being surfaced.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+        "impl": t_reject_proposal,
+    },
+    "finance_recurring": {
+        "description": "Detected recurring charges (subscriptions, rent, "
+                       "insurance): counterparty + stable amount + regular "
+                       "cadence. Input for the weekly report.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "min_occurrences": {"type": "integer", "description": "default 3"},
+                "amount_tolerance": {"type": "number",
+                                     "description": "relative, default 0.15"},
+            },
+        },
+        "impl": t_recurring,
     },
 }
 

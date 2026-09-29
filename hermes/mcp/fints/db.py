@@ -28,7 +28,7 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 DEFAULT_DB = "~/.hermes/finance/finance.db"
 
@@ -115,6 +115,21 @@ CREATE TABLE IF NOT EXISTS categories (
   description TEXT,
   is_builtin  INTEGER DEFAULT 0,
   created_at  TEXT
+);
+
+-- Schema v2 (labeling card): LLM-proposed categories await Karl's approval
+-- here instead of being auto-inserted into `categories`. Auto-creation would
+-- let the taxonomy drift silently, which is the failure mode to avoid: a
+-- proposal is a SUGGESTION, and only accept_proposal() promotes it.
+CREATE TABLE IF NOT EXISTS category_proposals (
+  name         TEXT PRIMARY KEY,
+  rationale    TEXT,
+  example_ids  TEXT,            -- JSON array of transaction ids
+  count        INTEGER DEFAULT 0,
+  status       TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending','accepted','rejected')),
+  created_at   TEXT,
+  decided_at   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sync_log (
@@ -266,6 +281,121 @@ def sync_finish(con, sync_id, status, new_count=0, updated_count=0, error=None):
         "updated_count=?, error=? WHERE id=?",
         (now_iso(), status, new_count, updated_count, error, sync_id))
     con.commit()
+
+
+# ---------- labeling writes (schema v2, the categorization card) ----------
+# These mutate ONLY label/rule/proposal columns of the local DB. They are not a
+# bank write path: nothing here can move money, and the FinTS surface is still
+# exactly get_sepa_accounts/get_transactions. test_harness.py section 5 keeps
+# both facts honest.
+
+def set_label(con, tx_id, category, source, confidence=None, commit=True):
+    """Set category/label_source/label_confidence/labeled_at on one row.
+
+    `category=None` clears the label (used by --reprocess-llm). `source` is
+    CHECK-constrained by the schema to rule|llm|manual.
+    """
+    if source is not None and source not in LABEL_SOURCES:
+        raise ValueError(f"label_source must be one of {LABEL_SOURCES}, got {source!r}")
+    con.execute(
+        "UPDATE transactions SET category=?, label_source=?, "
+        "label_confidence=?, labeled_at=? WHERE id=?",
+        (category, source, confidence, now_iso() if category else None,
+         int(tx_id)))
+    if commit:
+        con.commit()
+
+
+def bump_hit_count(con, rule_id, n=1, commit=True):
+    con.execute("UPDATE rules SET hit_count = hit_count + ? WHERE id=?",
+                (int(n), int(rule_id)))
+    if commit:
+        con.commit()
+
+
+def add_rule(con, match_type, pattern, category, priority=100, source="manual"):
+    """Insert a rule. Returns (rule_id, created:bool).
+
+    UNIQUE(match_type, pattern) makes this idempotent: re-promoting the same
+    merchant returns the existing rule instead of raising.
+    """
+    if match_type not in MATCH_TYPES:
+        raise ValueError(f"match_type must be one of {MATCH_TYPES}, got {match_type!r}")
+    cur = con.execute(
+        "INSERT INTO rules(match_type, pattern, category, priority, source, "
+        "created_at) VALUES (?,?,?,?,?,?) "
+        "ON CONFLICT(match_type, pattern) DO NOTHING",
+        (match_type, pattern, category, int(priority), source, now_iso()))
+    con.commit()
+    if cur.rowcount:
+        return cur.lastrowid, True
+    row = con.execute("SELECT id FROM rules WHERE match_type=? AND pattern=?",
+                      (match_type, pattern)).fetchone()
+    return (row["id"] if row else None), False
+
+
+def delete_rule(con, rule_id):
+    cur = con.execute("DELETE FROM rules WHERE id=?", (int(rule_id),))
+    con.commit()
+    return cur.rowcount
+
+
+def record_proposal(con, name, rationale, tx_ids):
+    """Upsert a pending category proposal, merging example ids and count.
+
+    A proposal NEVER touches the `categories` table — accept_proposal() is the
+    only path from suggestion to taxonomy, and it needs Karl.
+    """
+    row = con.execute("SELECT example_ids, count, status FROM "
+                      "category_proposals WHERE name=?", (name,)).fetchone()
+    new_ids = [int(i) for i in tx_ids]
+    if row is None:
+        con.execute(
+            "INSERT INTO category_proposals(name, rationale, example_ids, "
+            "count, status, created_at) VALUES (?,?,?,?, 'pending', ?)",
+            (name, rationale, json.dumps(new_ids), len(new_ids), now_iso()))
+    else:
+        merged = list(dict.fromkeys(json.loads(row["example_ids"] or "[]") + new_ids))
+        con.execute(
+            "UPDATE category_proposals SET example_ids=?, count=?, "
+            "rationale=COALESCE(rationale, ?) WHERE name=?",
+            (json.dumps(merged[:20]), len(merged), rationale, name))
+    con.commit()
+
+
+def decide_proposal(con, name, status, kind="expense"):
+    """Accept (also inserting the category) or reject a proposal."""
+    if status not in ("accepted", "rejected"):
+        raise ValueError("status must be accepted or rejected")
+    row = con.execute("SELECT name, rationale FROM category_proposals "
+                      "WHERE name=?", (name,)).fetchone()
+    if row is None:
+        return None
+    if status == "accepted":
+        con.execute(
+            "INSERT INTO categories(name, kind, description, is_builtin, "
+            "created_at) VALUES (?,?,?,0,?) ON CONFLICT(name) DO NOTHING",
+            (name, kind, row["rationale"], now_iso()))
+    con.execute("UPDATE category_proposals SET status=?, decided_at=? "
+                "WHERE name=?", (status, now_iso(), name))
+    con.commit()
+    return status
+
+
+def proposals(con, status=None):
+    sql = ("SELECT name, rationale, example_ids, count, status, created_at, "
+           "decided_at FROM category_proposals")
+    params = []
+    if status:
+        sql += " WHERE status=?"
+        params.append(status)
+    sql += " ORDER BY count DESC, name"
+    out = []
+    for r in con.execute(sql, params):
+        d = dict(r)
+        d["example_ids"] = json.loads(d["example_ids"] or "[]")
+        out.append(d)
+    return out
 
 
 # ---------- reads ----------
