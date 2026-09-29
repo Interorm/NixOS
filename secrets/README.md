@@ -132,6 +132,46 @@ sudo nixos-rebuild switch --flake .#homeserver   # or push + rebuild on the box
 
 `agenix` is also on the homeserver's PATH, so you can do the same over SSH.
 
+### FinTS (online banking) credentials
+
+The FinTS MCP server reads its three secret values from this **same** file —
+there is deliberately no separate banking secret, because `hermes-karl.age`
+already is "the credentials Karl's agent may use", it is already encrypted to
+Karl + the host only, and a second file would be a second thing to rekey.
+The public facts (BLZ `25650106`, the FinTS endpoint) are declared in Nix, in
+`hermes/mcp/fints.nix`, rather than hidden in ciphertext.
+
+Add three lines to the file opened by the command above:
+
+```
+FINTS_USER_ID=<Anmeldename>
+FINTS_PIN=<online-banking PIN>
+FINTS_PRODUCT_ID=<FinTS Produkt-ID>
+```
+
+| Variable | What it is | Watch out |
+|---|---|---|
+| `FINTS_USER_ID` | The **Anmeldename** — the login name typed into the Sparkasse online-banking form | **Not** the account number, not the IBAN, not the Legitimations-ID. Using the account number is the single most common FinTS setup mistake and the bank's error message does not say so. |
+| `FINTS_PIN` | The online-banking PIN | The digits typed in the login form, **not** a TAN. A TAN is single-use and comes from the S-pushTAN app. The server never retries a rejected PIN — repeats lock the online banking. |
+| `FINTS_PRODUCT_ID` | FinTS Produkt-ID identifying the client software | python-fints ≥ 4 has **no default** and raises without one. Try a placeholder string first; if the bank rejects it, register a real one (free) at <https://www.hbci-zka.de/register/prod_register.htm>. Changing it later is a one-line `.env` edit, no code change. |
+
+No value may contain a line break, and quote it if it contains shell
+metacharacters — `fints-enroll` sources this file like any env file.
+
+Then, once, on the homeserver (this is the one interactive bootstrap; it is
+**not** repeated after every rebuild):
+
+```bash
+sudo -iu karl fints-enroll        # approve the push notification in S-pushTAN
+sudo -iu karl fints-enroll --status
+```
+
+That writes `~/.hermes/finance/fints_state.json` (0600), which is what lets
+later syncs read TAN-free under the PSD2 exemption for about 180 days.
+`fints_status` counts that window down locally and tells you when to re-run
+it; nothing else about the setup changes.
+
+
 ## Step-by-step: Joni adds/edits his own secrets
 
 Joni never needs Karl, and Karl never sees the values.

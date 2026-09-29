@@ -39,9 +39,39 @@ logged, never written to the DB, never returned in a tool response.
 | `FINTS_PRODUCT_ID` | FinTS Produkt-ID — **no default exists**, see below | *(required)* |
 | `FINTS_DB` | SQLite store | `~/.hermes/finance/finance.db` |
 | `FINTS_STATE` | Persisted FinTS state | `~/.hermes/finance/fints_state.json` |
+| `FINTS_ENROLL_CMD` | How the server tells you to re-enroll | `python3 enroll.py`; the Nix wiring sets it to `fints-enroll` |
 
 A missing variable produces a structured setup error naming it — never a
 stack trace, never a silent default.
+
+## Deployment (NixOS)
+
+`hermes/mcp/fints.nix` is the MCP registry snippet; `package.nix` in this
+directory builds the application both it and `hermes/users/karl.nix` use, so
+the server and the enrollment CLI can never come from different sources. On
+the deployed box the commands are `fints-mcp` (started by Hermes) and
+`fints-enroll` (run by Karl); there is no `enroll.py` in any working
+directory, which is why `FINTS_ENROLL_CMD` exists — every "run X to
+re-authorise" message names whatever the deployment actually installed.
+
+`fints-enroll` sources the agent's `~/.hermes/.env` (override with
+`HERMES_ENV_FILE`) because Hermes, not the login shell, is what normally
+resolves those credentials — this keeps the PIN off the command line.
+
+### Never package this directory with a bare `copyPathToStore ./.`
+
+`package.nix` builds its source from an explicit `lib.fileset` allowlist
+(`*.py` + `fixtures/`), and that is a security control, not housekeeping.
+Verified on nix 2.34.8: with a `finance.db` and a `fints_state.json` sitting
+in this directory, `git status` correctly ignored both (see `.gitignore`) and
+**both still landed in the flake source and in the store copy at 0444** —
+world-readable to every user on the box, forever, because a dirty flake tree
+is not filtered by `.gitignore`. The real files live in `~/.hermes/finance/`,
+so this needs a stray copy to bite; but this README tells you to run
+`test_harness.py` from this directory, and `__pycache__/` gets there by
+exactly that route. Add new modules as `*.py` and they are picked up
+automatically; anything holding data must never be added to the fileset.
+
 
 ### The Produkt-ID, and the tradeoff Karl chose
 

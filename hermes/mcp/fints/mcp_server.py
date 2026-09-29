@@ -70,7 +70,7 @@ def _ro_or_err():
         return None, fc.err(
             "db_missing",
             f"no database at {db.db_path()} yet — run fints_sync first "
-            f"(or enroll.py if not yet enrolled)")
+            f"(or `{fc.enroll_cmd()}` if not yet enrolled)")
 
 
 # ---------- period parsing ----------
@@ -132,10 +132,12 @@ def t_status(args):
             con.close()
     st = out["state"]
     if not st.get("enrolled"):
-        out["next_action"] = "run enroll.py once (interactive pushTAN approval)"
+        out["next_action"] = (f"run `{fc.enroll_cmd()}` once "
+                              f"(interactive pushTAN approval)")
     elif st.get("reauth_expired"):
-        out["next_action"] = ("the 180-day PSD2 window has lapsed — re-run "
-                              "enroll.py to re-authorise")
+        out["next_action"] = (f"the {fc.SCA_VALIDITY_DAYS}-day PSD2 window has "
+                              f"lapsed — re-run `{fc.enroll_cmd()}` to "
+                              f"re-authorise")
     else:
         out["next_action"] = "none — syncs should run TAN-free"
     return out
@@ -157,17 +159,17 @@ def t_sync(args):
     doc, blob = fc.load_state()
     if blob is None:
         return fc.err("not_enrolled",
-                      "no usable FinTS state — run enroll.py once to approve "
-                      "the pushTAN in the S-pushTAN app",
+                      f"no usable FinTS state — run `{fc.enroll_cmd()}` once "
+                      f"to approve the pushTAN in the S-pushTAN app",
                       state_path=fc.state_path(),
-                      hint="python3 enroll.py")
+                      hint=fc.enroll_cmd())
     info = fc.state_info()
     if info.get("reauth_expired"):
         return fc.err("tan_required",
                       f"the {fc.SCA_VALIDITY_DAYS}-day PSD2 re-auth window "
-                      f"lapsed on {info.get('reauth_due')} — re-run enroll.py "
-                      f"and approve in the S-pushTAN app",
-                      state_path=fc.state_path(), hint="python3 enroll.py",
+                      f"lapsed on {info.get('reauth_due')} — re-run "
+                      f"`{fc.enroll_cmd()}` and approve in the S-pushTAN app",
+                      state_path=fc.state_path(), hint=fc.enroll_cmd(),
                       reauth_due=info.get("reauth_due"))
 
     try:
@@ -200,16 +202,16 @@ def t_sync(args):
     except fc.TanRequired as e:
         db.sync_finish(con, sync_id, "tan_required", 0, 0, "NeedTANResponse")
         return fc.err("tan_required",
-                      "the bank demanded a fresh pushTAN — re-run enroll.py "
-                      "and approve in the S-pushTAN app",
-                      hint="python3 enroll.py",
+                      f"the bank demanded a fresh pushTAN — re-run "
+                      f"`{fc.enroll_cmd()}` and approve in the S-pushTAN app",
+                      hint=fc.enroll_cmd(),
                       decoupled=e.decoupled,
                       challenge=fc.scrub(e.challenge, cfg))
     except FinTSSCARequiredError as e:
         db.sync_finish(con, sync_id, "tan_required", 0, 0, "sca_required")
         return fc.err("tan_required",
                       f"strong authentication required: {fc.scrub(e, cfg)} — "
-                      f"re-run enroll.py", hint="python3 enroll.py")
+                      f"re-run `{fc.enroll_cmd()}`", hint=fc.enroll_cmd())
     except FinTSClientPINError as e:
         # Do NOT retry: repeated wrong-PIN attempts lock the online banking.
         db.sync_finish(con, sync_id, "auth_failed", 0, 0, "pin_rejected")
@@ -453,8 +455,9 @@ def handle(msg):
                 "fints_sync is the only tool that contacts the bank; it is "
                 "idempotent, so re-running it is safe. No transfer or other "
                 "write capability exists in this server. If fints_status "
-                "reports not enrolled or an expired 180-day PSD2 window, Karl "
-                "must run enroll.py by hand and approve in the S-pushTAN app."),
+                f"reports not enrolled or an expired {fc.SCA_VALIDITY_DAYS}-day "
+                f"PSD2 window, Karl must run `{fc.enroll_cmd()}` by hand and "
+                f"approve in the S-pushTAN app."),
         }
     if method == "notifications/initialized":
         return None

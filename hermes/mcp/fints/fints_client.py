@@ -57,8 +57,22 @@ ENV_USER_ID = "FINTS_USER_ID"
 ENV_PIN = "FINTS_PIN"
 ENV_PRODUCT_ID = "FINTS_PRODUCT_ID"
 ENV_STATE = "FINTS_STATE"
+ENV_ENROLL_CMD = "FINTS_ENROLL_CMD"
 
 REQUIRED_ENV = (ENV_BLZ, ENV_ENDPOINT, ENV_USER_ID, ENV_PIN, ENV_PRODUCT_ID)
+
+# What to tell the caller to run when a fresh pushTAN approval is needed.
+# Deployed by Nix (hermes/mcp/fints.nix) the package is a store path and there
+# is no enroll.py in anyone's working directory, so the honest instruction is
+# the wrapper's name; run straight from a checkout it is the script. Resolved
+# lazily, not at import, so a test can override it like FINTS_DB/FINTS_STATE.
+DEFAULT_ENROLL_CMD = "python3 enroll.py"
+
+
+def enroll_cmd():
+    """The command that performs enrollment, as the deployment named it."""
+    return (os.environ.get(ENV_ENROLL_CMD) or "").strip() or DEFAULT_ENROLL_CMD
+
 
 
 def log(*a):
@@ -297,7 +311,7 @@ def state_info(path=None):
     doc, blob = load_state(p)
     if doc is None:
         return {"enrolled": False, "state_path": p,
-                "message": "not enrolled — run enroll.py once"}
+                "message": f"not enrolled — run `{enroll_cmd()}` once"}
     info = {"enrolled": blob is not None, "state_path": p,
             "tan_mechanism": doc.get("tan_mechanism"),
             "tan_medium": doc.get("tan_medium"),
