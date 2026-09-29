@@ -17,19 +17,6 @@ in {
         users = [ "karl" ];
     };
 
-    # Persistent state for the FinTS MCP server: finance.db and
-    # fints_state.json (both 0600, written by the server itself).  It lives in
-    # the agent's home, which is not Nix-managed, so it survives every rebuild
-    # -- the rule exists to *own the mode*: 0700 is asserted on every
-    # activation rather than left to whichever process happens to create the
-    # directory first.  Deliberately not in the repo and never in the store;
-    # hermes/mcp/fints/.gitignore keeps the files untracked, which is also
-    # what keeps them out of the flake source the server is built from.
-    #
-    # The path is spelled out rather than read from config.users.users.karl:
-    # that user is *derived from this very file* by
-    # modules/services/hermes/hermes.nix, and the same literal "/home/<name>"
-    # is what that module gives home-manager.
     systemd.tmpfiles.rules = [
         "d /home/karl/.hermes/finance 0700 karl karl - -"
     ];
