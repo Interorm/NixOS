@@ -1,0 +1,16 @@
+# Never commit the store, the FinTS state, or anything credential-bearing.
+# The real files live OUTSIDE the repo (~/.hermes/finance/) — these patterns
+# are a second line of defence against a stray copy or a test run pointed at
+# the working tree.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+finance.db
+fints_state.json
+fints_state.json.lock
+*.lock
+*.tmp
+.env
+__pycache__/
+*.pyc

@@ -1,0 +1,814 @@
+#!/usr/bin/env python3
+"""FinTS MCP server for Sparkasse Nienburg — STRICTLY READ-ONLY.
+
+Speaks MCP (JSON-RPC 2.0, newline-delimited) over stdio, like
+``hermes/mcp/onedrive/mcp_server.py``, whose conventions this mirrors:
+structured ``{"ok": false, "error": ..., "message": ...}`` returns instead of
+crashes, 0600 state files under an ``fcntl.flock`` guard, and secrets from env
+vars only.
+
+Tools:
+  fints_status            enrollment + 180-day re-auth countdown + DB stats.
+                          Never contacts the bank.
+  fints_sync              fetch the last N days and dedup-insert. The ONLY
+                          tool that talks to the bank.
+  finance_query           filtered SELECT over the DB (no SQL from callers).
+  finance_summary         per-category aggregates + income/expense totals.
+  finance_uncategorized   rows with category IS NULL (input for the labeling pass).
+  finance_categories      the seeded taxonomy (+ rules).
+  finance_relabel         correct a label and learn a rule from the correction.
+  finance_add_rule        add a rule by hand (dry-run + over-broad guard).
+  finance_list_rules      rules in evaluation order, with hit counts.
+  finance_delete_rule     remove a rule.
+  finance_proposals       LLM-proposed categories awaiting Karl's approval.
+  finance_accept_proposal accept a proposal into the taxonomy.
+  finance_reject_proposal reject a proposal.
+  finance_recurring       detected subscriptions/standing charges.
+
+SECURITY — read-only *towards the bank* is a property of the CODE, not a flag:
+  * The entire FinTS surface used by this package is ``get_sepa_accounts()``
+    and ``get_transactions()`` (see fints_client.fetch_rows). No transfer, no
+    standing order, no ``sepa_transfer``/HKCCS/HKDSE reference exists anywhere
+    in this directory; test_harness.py section 5 asserts that by scanning the
+    source and the live tool list.
+  * The labeling tools (finance_relabel/add_rule/delete_rule/accept_proposal)
+    DO write — but only to local columns: category, label_source, rules and
+    category_proposals. No money can move through any of them. That is why
+    section 5's tool-name check bans bank verbs (transfer/send/pay/…) rather
+    than the word "write": a DB-local label is not a bank operation.
+  * Every purely-read tool still opens the DB with a ``mode=ro`` URI, so a
+    query physically cannot write.
+  * The PIN is read from ``FINTS_PIN``, passed to the client, and never
+    logged, stored, or returned; ``fints_client.scrub()`` is applied to every
+    exception message that leaves the process.
+  * Transaction data reaches ONLY the local model fleet: categorize.py
+    refuses any non-loopback gateway host outright.
+
+Usage:
+    python3 mcp_server.py            # reads stdin, writes stdout (NDJSON)
+Requires the ``fints`` package for fints_sync only; every other tool is
+stdlib-only and works without it.
+"""
+import json
+import os
+import re
+import sqlite3
+import sys
+from datetime import date, datetime, timedelta, timezone
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import categorize  # noqa: E402
+import db  # noqa: E402
+import fints_client as fc  # noqa: E402
+
+PROTOCOL_VERSION = "2024-11-05"
+SERVER_NAME = "fints"
+SERVER_VERSION = "1.0.0"
+
+MAX_DAYS = 90  # FinTS practical maximum for statement history
+
+
+def log(*a):
+    print(*a, file=sys.stderr, flush=True)
+
+
+# ---------- DB helpers ----------
+def _ro():
+    """Read-only connection. Raises sqlite3.OperationalError if never synced."""
+    return db.connect(readonly=True)
+
+
+def _ro_or_err():
+    try:
+        return _ro(), None
+    except sqlite3.OperationalError:
+        return None, fc.err(
+            "db_missing",
+            f"no database at {db.db_path()} yet — run fints_sync first "
+            f"(or `{fc.enroll_cmd()}` if not yet enrolled)")
+
+
+# ---------- period parsing ----------
+def parse_period(period=None, date_from=None, date_to=None):
+    """('week'|'month'|'YYYY-MM'|'all'|None) or an explicit range -> (from, to)."""
+    if date_from or date_to:
+        return (date_from or "0000-01-01", date_to or "9999-12-31")
+    today = date.today()
+    p = (period or "month").strip().lower()
+    if p == "all":
+        return ("0000-01-01", "9999-12-31")
+    if p == "week":
+        start = today - timedelta(days=today.weekday())
+        return (start.isoformat(), today.isoformat())
+    if p == "month":
+        return (today.replace(day=1).isoformat(), today.isoformat())
+    if len(p) == 7 and p[4] == "-":  # YYYY-MM
+        y, m = int(p[:4]), int(p[5:])
+        start = date(y, m, 1)
+        end = date(y + (m == 12), (m % 12) + 1, 1) - timedelta(days=1)
+        return (start.isoformat(), end.isoformat())
+    if len(p) == 4 and p.isdigit():  # YYYY
+        return (f"{p}-01-01", f"{p}-12-31")
+    raise ValueError(f"unrecognised period {period!r} "
+                     f"(use week, month, all, YYYY-MM, YYYY, or date_from/date_to)")
+
+
+# ---------- tools ----------
+def t_status(args):
+    """Enrollment + re-auth countdown + DB stats. NEVER contacts the bank."""
+    out = {"ok": True, "bank": "Sparkasse Nienburg", "read_only": True}
+    out["state"] = fc.state_info()
+    out["db_path"] = db.db_path()
+    # Config presence only — never the values.
+    try:
+        fc.load_config()
+        out["config"] = {"complete": True}
+    except fc.SetupError as e:
+        out["config"] = {"complete": False,
+                         "missing": e.payload.get("missing", []),
+                         "hint": e.payload.get("hint")}
+    con, cerr = _ro_or_err()
+    if con is None:
+        out["db"] = cerr
+    else:
+        try:
+            out["db"] = {
+                "exists": True,
+                "schema_version": db.schema_version(con),
+                "transaction_count": db.row_count(con),
+                "uncategorized_count": con.execute(
+                    "SELECT COUNT(*) FROM transactions WHERE category IS NULL"
+                ).fetchone()[0],
+                "category_count": len(db.categories(con)),
+                "last_sync": db.last_sync(con),
+                "mode": oct(os.stat(db.db_path()).st_mode & 0o777),
+            }
+        finally:
+            con.close()
+    st = out["state"]
+    if not st.get("enrolled"):
+        out["next_action"] = (f"run `{fc.enroll_cmd()}` once "
+                              f"(interactive pushTAN approval)")
+    elif st.get("reauth_expired"):
+        out["next_action"] = (f"the {fc.SCA_VALIDITY_DAYS}-day PSD2 window has "
+                              f"lapsed — re-run `{fc.enroll_cmd()}` to "
+                              f"re-authorise")
+    else:
+        out["next_action"] = "none — syncs should run TAN-free"
+    return out
+
+
+def t_sync(args):
+    """Fetch + dedup-insert. The only tool that contacts the bank."""
+    days = args.get("days", MAX_DAYS)
+    try:
+        days = max(1, min(int(days), MAX_DAYS))
+    except (TypeError, ValueError):
+        return fc.err("bad_argument", f"days must be an integer 1..{MAX_DAYS}")
+
+    try:
+        cfg = fc.load_config()
+    except fc.SetupError as e:
+        return e.payload
+
+    doc, blob = fc.load_state()
+    if blob is None:
+        return fc.err("not_enrolled",
+                      f"no usable FinTS state — run `{fc.enroll_cmd()}` once "
+                      f"to approve the pushTAN in the S-pushTAN app",
+                      state_path=fc.state_path(),
+                      hint=fc.enroll_cmd())
+    info = fc.state_info()
+    if info.get("reauth_expired"):
+        return fc.err("tan_required",
+                      f"the {fc.SCA_VALIDITY_DAYS}-day PSD2 re-auth window "
+                      f"lapsed on {info.get('reauth_due')} — re-run "
+                      f"`{fc.enroll_cmd()}` and approve in the S-pushTAN app",
+                      state_path=fc.state_path(), hint=fc.enroll_cmd(),
+                      reauth_due=info.get("reauth_due"))
+
+    try:
+        from fints.exceptions import (FinTSClientPINError, FinTSSCARequiredError,
+                                      FinTSConnectionError, FinTSError)
+    except ImportError as e:
+        return fc.err("dependency_missing",
+                      f"the `fints` package is not importable: {e}. "
+                      f"Run the server from the Nix wrapper "
+                      f"(python3.withPackages (ps: [ ps.fints ])).")
+
+    db.migrate()
+    con = db.connect()
+    sync_id = db.sync_start(con)
+    client = None
+    try:
+        client = fc.build_client(cfg, from_data=blob)
+        with client:
+            # A decoupled pushTAN demand is a RETURN value in python-fints,
+            # not an exception; fetch_rows() turns it into fc.TanRequired so
+            # it can be caught here. Never block waiting for an app approval
+            # in a synchronous MCP call.
+            rows, iban = fc.fetch_rows(client, days=days)
+        new = db.insert_transactions(con, rows)
+        db.sync_finish(con, sync_id, "ok", new, 0, None)
+        return {"ok": True, "days": days, "fetched": len(rows),
+                "new": new, "duplicates_skipped": len(rows) - new,
+                "iban_suffix": (iban or "")[-4:],
+                "transaction_count": db.row_count(con)}
+    except fc.TanRequired as e:
+        db.sync_finish(con, sync_id, "tan_required", 0, 0, "NeedTANResponse")
+        return fc.err("tan_required",
+                      f"the bank demanded a fresh pushTAN — re-run "
+                      f"`{fc.enroll_cmd()}` and approve in the S-pushTAN app",
+                      hint=fc.enroll_cmd(),
+                      decoupled=e.decoupled,
+                      challenge=fc.scrub(e.challenge, cfg))
+    except FinTSSCARequiredError as e:
+        db.sync_finish(con, sync_id, "tan_required", 0, 0, "sca_required")
+        return fc.err("tan_required",
+                      f"strong authentication required: {fc.scrub(e, cfg)} — "
+                      f"re-run `{fc.enroll_cmd()}`", hint=fc.enroll_cmd())
+    except FinTSClientPINError as e:
+        # Do NOT retry: repeated wrong-PIN attempts lock the online banking.
+        db.sync_finish(con, sync_id, "auth_failed", 0, 0, "pin_rejected")
+        return fc.err("pin_rejected",
+                      f"the bank rejected the login: {fc.scrub(e, cfg)}. "
+                      f"NOT retried — repeated failures lock online banking. "
+                      f"Check FINTS_USER_ID / FINTS_PIN in the agenix .env.")
+    except FinTSConnectionError as e:
+        db.sync_finish(con, sync_id, "network_error", 0, 0, "connection")
+        return fc.err("network_error",
+                      f"could not reach {cfg.endpoint}: {fc.scrub(e, cfg)}")
+    except fc.SetupError as e:
+        db.sync_finish(con, sync_id, "setup_error", 0, 0, e.payload.get("error"))
+        return e.payload
+    except (FinTSError, Exception) as e:  # noqa: BLE001 — never crash the server
+        db.sync_finish(con, sync_id, "error", 0, 0, type(e).__name__)
+        return fc.err("sync_failed",
+                      f"{type(e).__name__}: {fc.scrub(e, cfg)}")
+    finally:
+        # Persist the refreshed BPD/UPD so the next sync reuses the system id
+        # (that reuse is what keeps reads TAN-free under the SCA exemption).
+        if client is not None:
+            try:
+                with fc.StateLock():
+                    fc.save_state(client.deconstruct(including_private=True),
+                                  enrolled_at=(doc or {}).get("enrolled_at"),
+                                  tan_mechanism=(doc or {}).get("tan_mechanism"),
+                                  tan_medium=(doc or {}).get("tan_medium"))
+            except Exception as e:  # noqa: BLE001
+                log(f"fints_mcp: could not persist refreshed state: {type(e).__name__}")
+        con.close()
+
+
+def t_query(args):
+    """Filtered read-only SELECT. Callers pass filters, never SQL.
+
+    A raw ``sql`` argument is accepted for convenience but must be a single
+    SELECT statement; it is executed on a ``mode=ro`` connection, so even a
+    bypass of the text check could not write.
+    """
+    con, cerr = _ro_or_err()
+    if con is None:
+        return cerr
+    try:
+        sql = (args.get("sql") or "").strip()
+        if sql:
+            ok, why = _is_select(sql)
+            if not ok:
+                return fc.err("rejected", why)
+            try:
+                rows = [dict(r) for r in con.execute(sql)]
+            except sqlite3.Error as e:
+                return fc.err("sql_error", str(e))
+            return {"ok": True, "n": len(rows), "rows": rows[:1000],
+                    "truncated": len(rows) > 1000}
+        rows = db.query_filters(
+            con,
+            date_from=args.get("date_from"), date_to=args.get("date_to"),
+            category=args.get("category"),
+            min_cents=args.get("min_cents"), max_cents=args.get("max_cents"),
+            counterparty=args.get("counterparty"),
+            purpose_contains=args.get("purpose_contains"),
+            uncategorized_only=bool(args.get("uncategorized_only")),
+            limit=args.get("limit", 100))
+        return {"ok": True, "n": len(rows), "rows": rows}
+    finally:
+        con.close()
+
+
+_FORBIDDEN_SQL = ("insert", "update", "delete", "drop", "alter", "create",
+                  "replace", "attach", "detach", "pragma", "vacuum", "reindex",
+                  "begin", "commit", "rollback", "grant", "trigger")
+
+
+def _is_select(sql):
+    """Accept exactly one SELECT/WITH statement; reject everything else."""
+    s = sql.strip().rstrip(";").strip()
+    if ";" in s:
+        return False, "only a single statement is allowed (';' found)"
+    low = s.lower()
+    if not (low.startswith("select") or low.startswith("with ")):
+        return False, "only SELECT (or WITH ... SELECT) queries are allowed"
+    # Token-level check so a column named e.g. "created_at" is not rejected.
+    import re
+    tokens = set(re.findall(r"[a-z_]+", low))
+    bad = sorted(tokens & set(_FORBIDDEN_SQL))
+    if bad:
+        return False, f"forbidden keyword(s) in query: {', '.join(bad)}"
+    return True, ""
+
+
+def t_summary(args):
+    con, cerr = _ro_or_err()
+    if con is None:
+        return cerr
+    try:
+        try:
+            d_from, d_to = parse_period(args.get("period"),
+                                        args.get("date_from"),
+                                        args.get("date_to"))
+        except ValueError as e:
+            return fc.err("bad_argument", str(e))
+        s = db.summary(con, d_from, d_to)
+        s["ok"] = True
+        s["period"] = args.get("period") or ("custom" if args.get("date_from")
+                                             or args.get("date_to") else "month")
+        return s
+    finally:
+        con.close()
+
+
+def t_uncategorized(args):
+    con, cerr = _ro_or_err()
+    if con is None:
+        return cerr
+    try:
+        limit = args.get("limit", 50)
+        try:
+            limit = max(1, min(int(limit), 500))
+        except (TypeError, ValueError):
+            return fc.err("bad_argument", "limit must be an integer 1..500")
+        rows = db.uncategorized(con, limit)
+        total = con.execute(
+            "SELECT COUNT(*) FROM transactions WHERE category IS NULL").fetchone()[0]
+        return {"ok": True, "n": len(rows), "total_uncategorized": total,
+                "rows": rows}
+    finally:
+        con.close()
+
+
+def t_categories(args):
+    """The taxonomy + rules. Read helper for the labeling card (T2)."""
+    con, cerr = _ro_or_err()
+    if con is None:
+        return cerr
+    try:
+        return {"ok": True, "categories": db.categories(con),
+                "rules": db.rules(con),
+                "match_types": list(db.MATCH_TYPES),
+                "kinds": list(db.CATEGORY_KINDS)}
+    finally:
+        con.close()
+
+
+# ---------- labeling tools (schema v2) ----------
+# These write to the LOCAL DB only — labels, rules and category proposals.
+# They are not a bank write path: no money can move through any of them, and
+# the FinTS surface is still exactly get_sepa_accounts/get_transactions.
+
+def _rw_or_err():
+    try:
+        return db.connect(), None
+    except sqlite3.OperationalError as e:
+        return None, fc.err("db_missing", f"cannot open {db.db_path()}: {e}")
+
+
+def t_relabel(args):
+    """Karl corrects one row; the system learns a rule so it never re-asks."""
+    tx_id = args.get("transaction_id")
+    category = args.get("category")
+    if tx_id is None or not category:
+        return fc.err("bad_argument",
+                      "transaction_id and category are both required")
+    con, cerr = _rw_or_err()
+    if con is None:
+        return cerr
+    try:
+        return categorize.relabel(
+            con, tx_id, category,
+            create_rule=bool(args.get("create_rule", True)),
+            back_apply=bool(args.get("back_apply", True)),
+            force=bool(args.get("force", False)))
+    except (ValueError, TypeError) as e:
+        return fc.err("bad_argument", str(e))
+    finally:
+        con.close()
+
+
+def t_add_rule(args):
+    """Add a rule by hand. Dry-runs it first and refuses an over-broad one."""
+    mt, pattern = args.get("match_type"), args.get("pattern")
+    category = args.get("category")
+    if not (mt and pattern and category):
+        return fc.err("bad_argument",
+                      "match_type, pattern and category are all required",
+                      match_types=list(db.MATCH_TYPES))
+    if mt not in db.MATCH_TYPES:
+        return fc.err("bad_argument", f"match_type must be one of {db.MATCH_TYPES}")
+    con, cerr = _rw_or_err()
+    if con is None:
+        return cerr
+    try:
+        known = {c["name"] for c in db.categories(con)}
+        if category not in known:
+            return fc.err("unknown_category",
+                          f"{category!r} is not a known category",
+                          known_categories=sorted(known))
+        if mt == "purpose_regex":
+            try:
+                re.compile(pattern)
+            except re.error as e:
+                return fc.err("bad_regex", f"invalid purpose_regex: {e}")
+        preview = categorize.dry_run_rule(con, mt, pattern, category)
+        force = bool(args.get("force", False))
+        if args.get("dry_run"):
+            return {"ok": True, "dry_run": True, "preview": preview}
+        if not force and preview["conflicts"]:
+            return fc.err("rule_would_collide",
+                          f"it also matches {len(preview['conflicts'])} row(s) "
+                          f"already labeled to a different category; pass "
+                          f"force=true if that is intended", preview=preview)
+        if not force and preview["broad"]:
+            return fc.err("rule_too_broad",
+                          "; ".join(preview["broad_reasons"]), preview=preview)
+        rule_id, created = db.add_rule(
+            con, mt, pattern, category,
+            priority=int(args.get("priority", 100)), source="manual")
+        return {"ok": True, "rule_id": rule_id, "created": created,
+                "preview": preview}
+    finally:
+        con.close()
+
+
+def t_list_rules(args):
+    con, cerr = _ro_or_err()
+    if con is None:
+        return cerr
+    try:
+        return {"ok": True, "rules": db.rules(con)}
+    finally:
+        con.close()
+
+
+def t_delete_rule(args):
+    rule_id = args.get("id", args.get("rule_id"))
+    if rule_id is None:
+        return fc.err("bad_argument", "id is required")
+    con, cerr = _rw_or_err()
+    if con is None:
+        return cerr
+    try:
+        n = db.delete_rule(con, rule_id)
+        if not n:
+            return fc.err("not_found", f"no rule with id {rule_id}")
+        return {"ok": True, "deleted": n,
+                "note": "existing labels are untouched; re-run label.py "
+                        "--reprocess-llm to re-decide affected rows"}
+    except (ValueError, TypeError) as e:
+        return fc.err("bad_argument", str(e))
+    finally:
+        con.close()
+
+
+def t_proposals(args):
+    con, cerr = _ro_or_err()
+    if con is None:
+        return cerr
+    try:
+        return {"ok": True,
+                "proposals": db.proposals(con, status=args.get("status",
+                                                               "pending"))}
+    finally:
+        con.close()
+
+
+def _decide(args, status):
+    name = args.get("name")
+    if not name:
+        return fc.err("bad_argument", "name is required")
+    con, cerr = _rw_or_err()
+    if con is None:
+        return cerr
+    try:
+        kind = args.get("kind", "expense")
+        if kind not in db.CATEGORY_KINDS:
+            return fc.err("bad_argument", f"kind must be one of {db.CATEGORY_KINDS}")
+        res = db.decide_proposal(con, name, status, kind=kind)
+        if res is None:
+            return fc.err("not_found", f"no proposal named {name!r}")
+        return {"ok": True, "name": name, "status": res,
+                "note": ("the category is now in the taxonomy and will appear "
+                         "in the next LLM prompt automatically"
+                         if status == "accepted" else
+                         "the proposal will no longer be surfaced")}
+    finally:
+        con.close()
+
+
+def t_accept_proposal(args):
+    return _decide(args, "accepted")
+
+
+def t_reject_proposal(args):
+    return _decide(args, "rejected")
+
+
+def t_recurring(args):
+    """Subscription/standing-charge detection — consumed by the weekly report."""
+    con, cerr = _ro_or_err()
+    if con is None:
+        return cerr
+    try:
+        return {"ok": True, "recurring": categorize.find_recurring(
+            con,
+            min_occurrences=int(args.get("min_occurrences", 3)),
+            amount_tolerance=float(args.get("amount_tolerance", 0.15)))}
+    finally:
+        con.close()
+
+
+TOOL_DEFS = {
+    "fints_status": {
+        "description": "FinTS enrollment status, days remaining until the "
+                       "180-day PSD2 re-auth, last sync result and DB stats. "
+                       "Does NOT contact the bank.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "impl": t_status,
+    },
+    "fints_sync": {
+        "description": "Fetch the last N days of Girokonto transactions "
+                       "(read-only) and dedup-insert them. Idempotent: "
+                       "re-running inserts nothing already stored.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"days": {"type": "integer",
+                                    "description": f"1..{MAX_DAYS}, default {MAX_DAYS}"}},
+        },
+        "impl": t_sync,
+    },
+    "finance_query": {
+        "description": "Read-only query over stored transactions. Use the "
+                       "filter arguments; a raw `sql` must be a single SELECT.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "date_from": {"type": "string", "description": "YYYY-MM-DD inclusive"},
+                "date_to": {"type": "string", "description": "YYYY-MM-DD inclusive"},
+                "category": {"type": "string"},
+                "uncategorized_only": {"type": "boolean"},
+                "min_cents": {"type": "integer", "description": "signed cents"},
+                "max_cents": {"type": "integer", "description": "signed cents"},
+                "counterparty": {"type": "string", "description": "substring of name or IBAN"},
+                "purpose_contains": {"type": "string"},
+                "limit": {"type": "integer", "description": "default 100, max 1000"},
+                "sql": {"type": "string", "description": "optional single SELECT"},
+            },
+        },
+        "impl": t_query,
+    },
+    "finance_summary": {
+        "description": "Per-category aggregates and income/expense totals "
+                       "(cents) for a period.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "period": {"type": "string",
+                           "description": "week | month | all | YYYY-MM | YYYY"},
+                "date_from": {"type": "string"},
+                "date_to": {"type": "string"},
+            },
+        },
+        "impl": t_summary,
+    },
+    "finance_uncategorized": {
+        "description": "Transactions with category IS NULL, newest first — "
+                       "the input for the labeling pass.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer",
+                                     "description": "default 50, max 500"}},
+        },
+        "impl": t_uncategorized,
+    },
+    "finance_categories": {
+        "description": "The seeded category taxonomy and current rules "
+                       "(read helper for the labeling pass).",
+        "inputSchema": {"type": "object", "properties": {}},
+        "impl": t_categories,
+    },
+    # --- labeling tools: they write LABELS, RULES and PROPOSALS in the local
+    # DB. None of them can move money; the bank surface stays read-only.
+    "finance_relabel": {
+        "description": "Correct one transaction's category and (by default) "
+                       "learn a rule from it, so the LLM is never asked about "
+                       "that merchant again. The candidate rule is dry-run "
+                       "first and REFUSED if it would collide with rows "
+                       "labeled differently or is too broad.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "transaction_id": {"type": "integer"},
+                "category": {"type": "string",
+                             "description": "must already exist in the taxonomy"},
+                "create_rule": {"type": "boolean",
+                                "description": "default true — promote a rule"},
+                "back_apply": {"type": "boolean",
+                               "description": "default true — also fix matching "
+                                              "rows still labeled by the LLM"},
+                "force": {"type": "boolean",
+                          "description": "override the over-broad/collision guard"},
+            },
+            "required": ["transaction_id", "category"],
+        },
+        "impl": t_relabel,
+    },
+    "finance_add_rule": {
+        "description": "Add a categorization rule by hand. Dry-runs it "
+                       "against the stored history first; pass dry_run=true "
+                       "to only preview what it would (re)label.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "match_type": {"type": "string",
+                               "enum": list(db.MATCH_TYPES)},
+                "pattern": {"type": "string"},
+                "category": {"type": "string"},
+                "priority": {"type": "integer",
+                             "description": "lower wins, default 100"},
+                "dry_run": {"type": "boolean"},
+                "force": {"type": "boolean"},
+            },
+            "required": ["match_type", "pattern", "category"],
+        },
+        "impl": t_add_rule,
+    },
+    "finance_list_rules": {
+        "description": "All categorization rules with their hit counts, in "
+                       "evaluation order (ascending priority).",
+        "inputSchema": {"type": "object", "properties": {}},
+        "impl": t_list_rules,
+    },
+    "finance_delete_rule": {
+        "description": "Remove a categorization rule by id. Existing labels "
+                       "are left untouched.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "integer"}},
+            "required": ["id"],
+        },
+        "impl": t_delete_rule,
+    },
+    "finance_proposals": {
+        "description": "Category names the LLM proposed because nothing fit. "
+                       "Suggestions only — they are NOT in the taxonomy until "
+                       "accepted.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"status": {"type": "string",
+                                      "enum": ["pending", "accepted", "rejected"]}},
+        },
+        "impl": t_proposals,
+    },
+    "finance_accept_proposal": {
+        "description": "Approve a proposed category: it enters the taxonomy "
+                       "and appears in every later LLM prompt automatically.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "kind": {"type": "string", "enum": list(db.CATEGORY_KINDS),
+                         "description": "default expense"},
+            },
+            "required": ["name"],
+        },
+        "impl": t_accept_proposal,
+    },
+    "finance_reject_proposal": {
+        "description": "Reject a proposed category so it stops being surfaced.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+        "impl": t_reject_proposal,
+    },
+    "finance_recurring": {
+        "description": "Detected recurring charges (subscriptions, rent, "
+                       "insurance): counterparty + stable amount + regular "
+                       "cadence. Input for the weekly report.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "min_occurrences": {"type": "integer", "description": "default 3"},
+                "amount_tolerance": {"type": "number",
+                                     "description": "relative, default 0.15"},
+            },
+        },
+        "impl": t_recurring,
+    },
+}
+
+
+# ---------- MCP / JSON-RPC ----------
+def tool_result(payload, ok=None):
+    """One JSON text block, like the OneDrive server's text blocks."""
+    if ok is None:
+        ok = bool(payload.get("ok", True)) if isinstance(payload, dict) else True
+    return {"content": [{"type": "text",
+                         "text": json.dumps(payload, indent=2, ensure_ascii=False,
+                                            default=str)}],
+            "isError": not ok}
+
+
+def handle(msg):
+    mid = msg.get("id")
+    method = msg.get("method")
+    params = msg.get("params", {}) or {}
+    is_notification = mid is None
+
+    if method == "initialize":
+        return {
+            "protocolVersion": PROTOCOL_VERSION,
+            "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+            "capabilities": {"tools": {}},
+            "instructions": (
+                "Read-only access to Karl's Sparkasse Nienburg Girokonto. "
+                "fints_sync is the only tool that contacts the bank; it is "
+                "idempotent, so re-running it is safe. No transfer or other "
+                "write capability exists in this server. If fints_status "
+                f"reports not enrolled or an expired {fc.SCA_VALIDITY_DAYS}-day "
+                f"PSD2 window, Karl must run `{fc.enroll_cmd()}` by hand and "
+                f"approve in the S-pushTAN app."),
+        }
+    if method == "notifications/initialized":
+        return None
+    if method == "ping":
+        return {}
+    if method == "tools/list":
+        return {"tools": [{"name": n, "description": d["description"],
+                           "inputSchema": d["inputSchema"]}
+                          for n, d in TOOL_DEFS.items()]}
+    if method == "tools/call":
+        name = params.get("name")
+        if name not in TOOL_DEFS:
+            if is_notification:
+                return None
+            return tool_result(fc.err("unknown_tool",
+                                      f"no such tool: {name}",
+                                      available=sorted(TOOL_DEFS)), ok=False)
+        try:
+            payload = TOOL_DEFS[name]["impl"](params.get("arguments", {}) or {})
+        except Exception as e:  # noqa: BLE001 — a tool must never crash the server
+            payload = fc.err("internal_error",
+                             f"{type(e).__name__}: {fc.scrub(e)}")
+        if is_notification:
+            return None
+        return tool_result(payload)
+
+    if is_notification:
+        return None
+    return {"error": {"code": -32601, "message": f"Method not found: {method}"}}
+
+
+def main():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msgs = msg if isinstance(msg, list) else [msg]
+        out = []
+        for m in msgs:
+            if not isinstance(m, dict) or "method" not in m:
+                continue
+            try:
+                result = handle(m)
+            except Exception as e:  # noqa: BLE001
+                result = {"error": {"code": -32603,
+                                    "message": f"Internal error: {type(e).__name__}"}}
+            if m.get("id") is not None:
+                out.append({"jsonrpc": "2.0", "id": m["id"], "result": result})
+            elif result is not None:
+                out.append({"jsonrpc": "2.0", "result": result})
+        if out:
+            sys.stdout.write(json.dumps(out[0] if len(out) == 1 else out) + "\n")
+            sys.stdout.flush()
+    log("fints_mcp: stdin closed, exiting")
+
+
+if __name__ == "__main__":
+    main()
