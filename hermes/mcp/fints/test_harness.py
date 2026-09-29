@@ -446,7 +446,7 @@ def s4_state(tmp):
     s = fc.scrub(msg)
     check("scrub() removes the PIN and user id from a message",
           fake_pin not in s and "karl123456" not in s, s)
-    cfg = fc.Config("25650106", "https://x", "karl123456", fake_pin, "PID")
+    cfg = fc.Config("99999999", "https://x", "karl123456", fake_pin, "PID")
     check("Config repr never shows the PIN",
           fake_pin not in repr(cfg) and fake_pin not in str(cfg), repr(cfg))
     for k in (fc.ENV_PIN, fc.ENV_USER_ID):
@@ -734,8 +734,8 @@ def s7_failure_modes(tmp):
     c2 = Client(extra_env={
         "FINTS_DB": os.path.join(tmp, "dedup", "finance.db"),
         "FINTS_STATE": sp,
-        "FINTS_BLZ": "25650106",
-        "FINTS_ENDPOINT": "https://banking-ni3.s-fints-pt-ni.de/fints30",
+        "FINTS_BLZ": "99999999",
+        "FINTS_ENDPOINT": "https://harness.invalid/fints30",
         "FINTS_USER_ID": "harness-not-a-real-login",
         "FINTS_PIN": "harness-not-a-real-pin",
         "FINTS_PRODUCT_ID": "HARNESS-PLACEHOLDER",

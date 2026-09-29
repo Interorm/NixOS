@@ -76,9 +76,12 @@ let
 
     # The daily labeling pass, as the cron calls it.  Deliberately NOT modelled
     # on fints-enroll: label.py imports categorize + db only, never
-    # fints_client, so it needs no bank credentials at all and this wrapper
-    # therefore does not source the agent's .env.  A cron job that labels rows
-    # should not have the PIN in its environment.
+    # fints_client, so it needs none of the five names in
+    # fints_client.REQUIRED_ENV -- no BLZ, no endpoint, and above all no
+    # credentials -- and this wrapper therefore does not source the agent's
+    # .env.  A cron job that labels rows should not have the PIN in its
+    # environment.  (Verified: label.py reads only categorize.py's
+    # HERMES_GATEWAY/FINANCE_LABEL_MODEL and db.py's FINTS_DB.)
     #
     # The gateway/model defaults live in categorize.py and are declared in
     # ../fints.nix for the MCP server; a systemd cron unit that sets neither
@@ -93,11 +96,21 @@ let
 
     # One-time (and ~every 180 days) interactive pushTAN enrolment.  It is the
     # single bootstrap step this feature needs -- see ../fints.nix -- and it
-    # needs the same credentials the MCP server gets, which for an
-    # interactive shell are not in the environment: the agent's .env is read
-    # by Hermes, not by login.  So the wrapper loads it the way a shell loads
-    # an env file, which keeps the credentials off the command line (and out
-    # of the terminal scrubber's way).
+    # needs the same configuration the MCP server gets, which for an
+    # interactive shell is not in the environment: the agent's .env is read by
+    # Hermes, not by login.  So the wrapper loads it the way a shell loads an
+    # env file, which keeps the credentials off the command line (and out of
+    # the terminal scrubber's way).
+    #
+    # That file is the ONE declaration of all five names in
+    # fints_client.REQUIRED_ENV -- FINTS_BLZ, FINTS_ENDPOINT, FINTS_USER_ID,
+    # FINTS_PIN, FINTS_PRODUCT_ID.  Deliberately no `:-` defaults are baked in
+    # here for the two non-secret ones: a default in the store would be a
+    # second place the bank config is stated, and the two could then disagree
+    # after a rebuild -- which is exactly the bug this replaced, in mirror
+    # image.  Sourcing .env is therefore the whole mechanism; a missing line
+    # surfaces as enroll.py's structured setup error naming the variable,
+    # which is the intended (and legible) first-run experience.
     #
     # HERMES_ENV_FILE overrides the path, for a sub-profile's .env or a test.
     # `set -a` exports every assignment; a value containing shell

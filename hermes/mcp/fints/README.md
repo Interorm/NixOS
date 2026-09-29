@@ -34,13 +34,20 @@ The nixos card owns the other half of this contract (the agenix secret that
 renders these into `~/.hermes/.env`). Read from env, never hardcoded, never
 logged, never written to the DB, never returned in a tool response.
 
+All five `REQUIRED_ENV` names are declared exactly once, in the
+agenix-encrypted `~/.hermes/.env`. Hermes resolves them into the MCP server's
+environment via `hermes/mcp/fints.nix`; `fints-enroll` sources the same file
+directly. Neither the BLZ nor the endpoint is secret, but keeping them there
+too is what makes the server and the enrolment CLI unable to disagree — see
+`secrets/README.md` for the five-line walkthrough.
+
 | Var | Meaning | Default |
 |---|---|---|
-| `FINTS_BLZ` | Bankleitzahl | *(required)* `25650106` |
-| `FINTS_ENDPOINT` | FinTS 3.0 PIN/TAN URL | *(required)* `https://banking-ni3.s-fints-pt-ni.de/fints30` |
-| `FINTS_USER_ID` | Karl's **Anmeldename** (login name, NOT the account number) | *(required)* |
-| `FINTS_PIN` | Online-banking PIN | *(required)* |
-| `FINTS_PRODUCT_ID` | FinTS Produkt-ID — **no default exists**, see below | *(required)* |
+| `FINTS_BLZ` | Bankleitzahl | *(required, from `.env`)* |
+| `FINTS_ENDPOINT` | FinTS 3.0 PIN/TAN URL | *(required, from `.env`)* |
+| `FINTS_USER_ID` | Karl's **Anmeldename** (login name, NOT the account number) | *(required, from `.env`)* |
+| `FINTS_PIN` | Online-banking PIN | *(required, from `.env`)* |
+| `FINTS_PRODUCT_ID` | FinTS Produkt-ID — **no default exists**, see below | *(required, from `.env`)* |
 | `FINTS_DB` | SQLite store | `~/.hermes/finance/finance.db` |
 | `FINTS_STATE` | Persisted FinTS state | `~/.hermes/finance/fints_state.json` |
 | `FINTS_ENROLL_CMD` | How the server tells you to re-enroll | `python3 enroll.py`; the Nix wiring sets it to `fints-enroll` |
