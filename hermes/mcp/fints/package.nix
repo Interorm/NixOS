@@ -62,10 +62,30 @@ let
         root = ./.;
         fileset = lib.fileset.unions [
             (lib.fileset.fileFilter (file: file.hasExt "py") ./.)
-            ./fixtures
+            # Not a bare `./fixtures`: that was safe while fixtures/ held only
+            # statement.mt940, but the labeling work added
+            # fixtures/student_transactions.py, so importing it materialises
+            # fixtures/__pycache__/*.pyc -- which a bare dir reference would
+            # copy into the store, making the output depend on whether anyone
+            # had run the suite in this tree.  Filtering .pyc here restores the
+            # invariant stated above for the fixtures dir too.
+            (lib.fileset.fileFilter (file: !(file.hasExt "pyc")) ./fixtures)
         ];
     };
 
+
+    # The daily labeling pass, as the cron calls it.  Deliberately NOT modelled
+    # on fints-enroll: label.py imports categorize + db only, never
+    # fints_client, so it needs no bank credentials at all and this wrapper
+    # therefore does not source the agent's .env.  A cron job that labels rows
+    # should not have the PIN in its environment.
+    #
+    # The gateway/model defaults live in categorize.py and are declared in
+    # ../fints.nix for the MCP server; a systemd cron unit that sets neither
+    # still gets loopback Gemma4-E4B from the Python defaults.
+    label = pkgs.writeShellScriptBin "fints-label" ''
+        exec ${python}/bin/python3 ${src}/label.py "$@"
+    '';
 
     mcp = pkgs.writeShellScriptBin "fints-mcp" ''
         exec ${python}/bin/python3 ${src}/mcp_server.py "$@"
@@ -101,9 +121,9 @@ let
 in
 pkgs.symlinkJoin {
     name = "fints-mcp";
-    paths = [ mcp enroll ];
+    paths = [ mcp enroll label ];
     meta = {
-        description = "Read-only FinTS/HBCI MCP server and pushTAN enrolment CLI";
+        description = "Read-only FinTS/HBCI MCP server, pushTAN enrolment CLI and transaction labeling CLI";
         mainProgram = "fints-mcp";
     };
 }

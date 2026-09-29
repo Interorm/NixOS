@@ -79,6 +79,18 @@ in {
         # cannot drift.
         FINTS_ENROLL_CMD = "fints-enroll";
 
+        # The labeling engine's two knobs (categorize.py).  Both already
+        # default to exactly these values in the Python, so this changes no
+        # behaviour -- it makes the contract declarative, which matters most
+        # for the model: the labeling pass must stay on Gemma4-E4B, which is
+        # always-on, and must never be pointed at Qwen3.8-27B, which sits
+        # behind Wake-on-LAN and would boot Karl's workstation from the daily
+        # cron.  The gateway must stay loopback; categorize.py._assert_local()
+        # refuses a non-local host outright, so transaction data cannot reach
+        # a cloud provider even if this line is edited.
+        FINANCE_LABEL_MODEL = "Gemma4-E4B";
+        HERMES_GATEWAY = "http://127.0.0.1:8080/v1";
+
         # Written literally (note the backslash) and resolved by Hermes from
         # .env at runtime, so no secret ever reaches the world-readable
         # /nix/store.  FINTS_USER_ID is the *Anmeldename* (online-banking
