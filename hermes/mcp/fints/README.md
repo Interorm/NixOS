@@ -22,7 +22,7 @@ works without it.
 | `fints_client.py` | Shared layer: env config, PIN scrubbing, the 0600 flock-guarded state file, MT940 → row mapping, and the **only** two FinTS data calls (`get_sepa_accounts`, `get_transactions`). |
 | `db.py` | SQLite schema, migrations, the seeded taxonomy, the dedup contract, and every query helper. Stdlib only — does not import `fints`. |
 | `categorize.py` | The categorization engine: rules pass, Gemma4-E4B pass, correction→rule promotion with the over-broad guard, and recurring detection. Stdlib only. |
-| `label.py` | CLI entry point for the daily cron: `--limit`, `--dry-run`, `--rules-only`, `--reprocess-llm`, `--recurring`, `--proposals`, `--json`. |
+| `label.py` | CLI entry point for the daily cron (`fints-label` when deployed): `--limit`, `--dry-run`, `--rules-only`, `--reprocess-llm`, `--recurring`, `--proposals`, `--json`. |
 | `test_harness.py` | Offline suite (9 sections) driving `mcp_server.py` like a real MCP client: schema+perms, MT940 parsing and Soll/Haben signs, dedup idempotency, state/flock/180-day countdown/PIN-scrubbing, the no-write-capability negative test, the MCP protocol, structured failure modes, the labeling engine, and a live section skipped unless `FINTS_LIVE=1`. |
 | `eval_labeling.py` | **Live** accuracy evaluation against a running Gemma4-E4B. Not part of the offline suite — run by hand after changing the prompt. |
 | `fixtures/statement.mt940` | A 4-transaction MT940 statement (2 debits, 1 credit, 1 cash withdrawal) used by the offline tests. Synthetic — no real account data. |
@@ -270,13 +270,18 @@ the server never crashes on a tool failure and never hangs waiting for a TAN.
    "please confirm" list. A wrong label Karl has to hunt down is worse than a
    blank one, so nothing is guessed.
 
+Deployed, the Nix package installs this CLI as **`fints-label`** (same
+arguments); run from a checkout it is `python3 label.py`. The cron must call
+the wrapper, since there is no `label.py` in any working directory on the
+box — the same reasoning as `fints-enroll` above.
+
 ```sh
-python3 label.py                 # the cron's invocation
-python3 label.py --dry-run       # decide everything, write nothing
-python3 label.py --rules-only    # no network at all
-python3 label.py --reprocess-llm # clear llm labels and redo them
-python3 label.py --recurring     # subscription report
-python3 label.py --proposals     # pending category suggestions
+fints-label                      # the cron's invocation
+fints-label --dry-run            # decide everything, write nothing
+fints-label --rules-only         # no network at all
+fints-label --reprocess-llm      # clear llm labels and redo them
+fints-label --recurring          # subscription report
+fints-label --proposals          # pending category suggestions
 ```
 
 `--reprocess-llm` only clears rows whose `label_source='llm'`; **`manual` and
@@ -347,7 +352,7 @@ When nothing fits, the model returns
 taxonomy drifts silently — the exact failure mode this avoids.
 
 ```sh
-python3 label.py --proposals            # see the queue
+python3 label.py --proposals            # see the queue (fints-label --proposals when deployed)
 # then, over MCP:
 finance_accept_proposal(name="Friseur & Koerperpflege", kind="expense")
 finance_reject_proposal(name="Sonstiges 2")
