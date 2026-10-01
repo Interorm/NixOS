@@ -13,7 +13,7 @@ There are two kinds of secret, wired in two different places:
 | Kind | Declared where | Example |
 |---|---|---|
 | **Per-agent** | **Automatic** — derived from `services.hermes-agents.agents` in `modules/services/hermes/hermes.nix` | `hermes-karl`, `hermes-joni` |
-| **Machine-level** | By hand in `modules/services/secrets/default.nix` | `tailscale-authkey` |
+| **Machine-level** | By hand in `secrets/secrets.nix` + a consumer | `tailscale-homeserver`, `restic-homeserver`, `google-client` |
 
 Per-agent secrets need **no Nix wiring at all**. Adding an agent to
 `agents` automatically declares `hermes-<name>`, owns it by that user at mode
@@ -37,6 +37,7 @@ agent. Adding an agent there automatically creates a rule for
 | `hermes-karl.age` | karl + homeserver | derived from `agents.karl.sshKeys` |
 | `hermes-joni.age` | joni + homeserver | derived from `agents.joni.sshKeys` |
 | `tailscale-authkey.age` | admin + homeserver | declared in `secrets.nix` (belongs to no agent) |
+| `google-client.age` | admin + homeserver | declared in `secrets.nix` — one app credential for the whole fleet, see below |
 
 `secrets.nix` is not a NixOS module — the agenix CLI plain-`import`s it
 (`RULES=./secrets.nix`). That is what lets it import the host profile with dummy
@@ -192,6 +193,109 @@ later syncs read TAN-free under the PSD2 exemption for about 180 days.
 `fints_status` counts that window down locally and tells you when to re-run
 it; nothing else about the setup changes.
 
+
+### Google OAuth: the client secret is fleet-level, the token is not
+
+Google access needs **two** credentials, and they have opposite properties. Getting
+this distinction wrong is the whole reason this section exists.
+
+| | **OAuth client secret** | **OAuth token** |
+|---|---|---|
+| What it is | identifies the *OAuth application* | identifies *one Google account's grant* |
+| Scope | **one for the whole fleet** — byte-identical for every agent and every account | **one per account** |
+| Contains | `client_id` + `client_secret` | `access_token` + **`refresh_token`** + a copy of the client id/secret |
+| How sensitive | **weakly** secret. A desktop ("installed") client's secret is not a real secret — Google's own docs say so, and PKCE is what actually protects the flow | **genuinely dangerous.** The refresh token is live, long-lived access to that mailbox |
+| Where it lives | `secrets/google-client.age` → `/run/agenix/google-<agent>`, tmpfs, `0400` | `~/.hermes/google/<account>/google_token.json`, `0600` |
+| In the repo? | **yes**, as ciphertext | **never** |
+| Reproducible? | **yes** — a rebuild from nothing restores it | **no** — only an interactive human consent mints one |
+| Read by | the consent flow, at setup time only | every API call |
+
+**State the asymmetry plainly: the *less* sensitive half is the reproducible one.**
+The genuinely dangerous half can never be reproducible, because only a human
+clicking through a consent screen can create it. That is not a gap in the
+declarative story — it is a one-time bootstrap per account, and crucially **nothing
+has to be re-run after a rebuild**. The token lives in the agent's home, outside
+the store, and refreshes itself.
+
+#### One ciphertext, fanned out per agent
+
+`google-client.age` is a **machine-level** secret: recipients are the admin (who
+replaces it when the Cloud Console credential rotates) and the host (which must
+decrypt it at activation). It was previously `google-<agent>.age`, derived per
+google-enabled agent — which was wrong on the facts, since the plaintext is one app
+credential and not personal data.
+
+`modules/services/hermes/hermes.nix` declares one `age.secrets` entry per
+google-enabled agent, all pointing at that same `file`:
+
+```
+secrets/google-client.age ──┬──► /run/agenix/google-karl   owner karl 0400
+                            ├──► /run/agenix/google-nana   owner nana 0400
+                            └──► …
+```
+
+Several `age.secrets` entries may legitimately share one `file`; agenix decrypts it
+once per entry. So **per-agent `0400` isolation of the decrypted copy is unchanged**
+— no agent can read another's — while the repo holds a single file with a single
+rule. Enabling Google for a new agent needs **no new `.age` file and no new rule**.
+
+A shared Unix group on one decrypted file was considered and rejected: it would
+widen who can read the plaintext and add a group to the system's vocabulary, for no
+gain over a decrypt that costs nothing.
+
+#### Creating or rotating it
+
+The plaintext is the JSON downloaded from the Google Cloud Console (APIs & Services
+→ Credentials → the **Desktop app** OAuth client → *Download JSON*), pasted
+verbatim:
+
+```bash
+agenix -e secrets/google-client.age
+```
+
+```json
+{"installed":{"client_id":"…apps.googleusercontent.com",
+ "project_id":"…","auth_uri":"https://accounts.google.com/o/oauth2/auth",
+ "token_uri":"https://oauth2.googleapis.com/token",
+ "client_secret":"…","redirect_uris":["http://localhost"]}}
+```
+
+It must be the **`installed`** (Desktop app) client type. A "Web application"
+client refuses the `http://localhost:1` redirect the consent flow uses, and the
+error at the token endpoint does not say so.
+
+Rotating it does **not** invalidate existing tokens: each token embeds its own copy
+of the client id/secret, and `google_api.py` never re-reads the client secret at
+runtime.
+
+#### The tokens
+
+One interactive consent per declared account, run as the agent on the box:
+
+```bash
+sudo -iu karl hermes-google-status            # see every account and its state
+sudo -iu karl hermes-google-auth <account>    # prints the consent URL
+# open it, sign in as the address it names, grant the listed scopes.
+# the browser ends on http://localhost:1 and FAILS TO LOAD -- that is expected.
+sudo -iu karl hermes-google-auth <account> '<paste the whole failed URL>'
+```
+
+The token is written `0600` and the command reports **granted vs declared**, so a
+partial consent (a scope unticked) is loud rather than silent. Nothing about this is
+repeated after a `nixos-rebuild`.
+
+Two operational caveats `hermes-google-status` will tell you about:
+
+- **`publishing = testing`** → Google issues refresh tokens that expire after about
+  **7 days** for users external to the OAuth app's own project. The agent's own
+  mailbox survives; a human's personal Gmail does not. Expect a weekly re-consent
+  until the app is verified for Production.
+- **Declared ≠ granted.** Google enforces the scopes in the **token**, so shrinking
+  `capabilities` in Nix does **not** shrink a token that already exists. Re-run the
+  consent, or revoke the grant at <https://myaccount.google.com/permissions>.
+
+See `docs/adr/0001-google-per-account-capabilities.md` for the model and
+`hermes/google/capabilities.nix` for what each capability grants.
 
 ## Step-by-step: Joni adds/edits his own secrets
 
