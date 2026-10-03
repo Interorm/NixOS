@@ -14,10 +14,10 @@
         ./secrets.nix
         ../services/backup.nix
 
-        ../../modules/services/tailscale.nix
+        ../services/tailscale.nix
         
         # Minecraft Servers
-        ../../modules/services/minecraft/crafty.nix
+        ../../modules/services/minecraft
         
         # Hermes and AI
         ./hermes

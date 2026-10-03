@@ -52,7 +52,16 @@
 
                 device = 0;
                 arguements = {
+                    n-gpu-layers = "999";
+                    flash-attn = "on";
 
+                    parallel = 4;
+                    cache-reuse = 256;
+
+                    ctx-size = 32768;
+                    ctx-checkpoints = 4;
+                    cache-type-k = "q8_0";
+                    cache-type-v = "q8_0";
                 };
             };
 
