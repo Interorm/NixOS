@@ -1,0 +1,5 @@
+{
+    ...
+}: {
+    imports = [ ./model-gateway.nix ]
+}

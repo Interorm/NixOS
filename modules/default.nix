@@ -2,9 +2,7 @@
     ...
 }: {
     imports = [
-        ./development/default.nix
-        ./hardware/default.nix
+        ./development
+        ./hardware
     ];
-
-    nix.settings.experimental-features = [ "nix-command" "flakes" ];
 } 
