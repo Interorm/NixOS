@@ -121,7 +121,7 @@ in {
         package = lib.mkOption {
             type = lib.types.package;
             default = inputs.hermes-agent.packages.${pkgs.stdenv.hostPlatform.system}.desktop;
-            defaultText = lib.literalExpression ''inputs.hermes-agent.packages.${system}.desktop'';
+            defaultText = lib.literalExpression ''inputs.hermes-agent.packages.$${system}.desktop'';
             description = ''
                 The hermes-desktop package to install. Defaults to the desktop
                 build of the pinned hermes-agent flake input.
@@ -131,7 +131,7 @@ in {
         hermesHome = lib.mkOption {
             type = lib.types.str;
             default = "/home/${cfg.user}/.hermes-client";
-            defaultText = lib.literalExpression ''"/home/${config.services.hermes-desktop-client.user}/.hermes-client"'';
+            defaultText = lib.literalExpression ''"/home/$${config.services.hermes-desktop-client.user}/.hermes-client"'';
             description = ''
                 The HERMES_HOME the desktop uses. Deliberately NOT ~/.hermes: a
                 pure client must not share a state directory with any local
@@ -141,32 +141,34 @@ in {
     };
 
     config = lib.mkIf cfg.enable {
-        # No local CLI: the client only needs the desktop app. Leaving
-        # programs.hermes-agent unset installs nothing; setting it false is the
-        # same, made explicit so a later edit cannot quietly add the CLI back.
+        # Grafted onto the host's existing home-manager.users.${cfg.user}
+        # entry: home.username / home.homeDirectory / home.stateVersion stay
+        # where the host (and Home Manager's own defaults) sets them, so this
+        # block only carries what the client needs and cannot conflict with
+        # the host's own entry.
         home-manager.users.${cfg.user} = {
-            imports = [ inputs.hermes-agent.homeManagerModules.default ];
-
-            home.username = cfg.user;
-            home.homeDirectory = "/home/${cfg.user}";
-            home.stateVersion = config.system.stateVersion;
-
-            programs.hermes-agent.enable = false;
-            programs.hermes-agent.desktop = {
-                enable = true;
-                package = desktopPackage;
-            };
-
-            # The HM module defines services.hermes-agent too; keep it off so no
-            # local gateway/backend unit is declared for this user.
-            services.hermes-agent.enable = false;
+            # The client itself. The desktop package ships its own XDG
+            # launcher entry (share/applications/hermes.desktop); Home Manager
+            # registers it for the user from home.packages.
+            #
+            # Deliberately NOT installed through the upstream hermes Home
+            # Manager module's `programs.hermes-agent.desktop.enable`: that
+            # block re-derives the wrapper's extraEnv/extraRun from a LOCAL
+            # services.hermes-agent (its HERMES_HOME, the local backend
+            # address, the local session token) and would overwrite exactly
+            # the args a remote client needs. With nothing here enabling that
+            # module, no local CLI and no local gateway/backend unit are
+            # declared for the user -- that is the "leave it unset" branch,
+            # and it is the one that actually avoids a local agent.
+            home.packages = [ desktopPackage ];
         };
 
         assertions = [
             {
                 # A relative path would resolve against the build cwd, not the
-                # machine, and silently point at the wrong file. Require absolute.
-                assertion = lib.hasInfix "/" cfg.tokenFile && lib.strings.hasPrefix "/" (toString cfg.tokenFile);
+                # machine, and silently point at the wrong file. Require
+                # absolute.
+                assertion = lib.strings.hasPrefix "/" (toString cfg.tokenFile);
                 message = "services.hermes-desktop-client.tokenFile must be an absolute path (e.g. an agenix .path under /run/agenix/), got: ${toString cfg.tokenFile}";
             }
         ];
