@@ -15,6 +15,10 @@
 # `mcp.foo` exist with no registration step anywhere.  The attribute name is
 # the filename without ".nix".
 #
+# `skills` is the same idea for repo-shipped SKILL.md trees under ./skills/:
+# dropping in hermes/skills/foo/SKILL.md makes `skills.foo` exist as a store
+# path.  See the comment on `skills` below for how it is consumed.
+#
 # Every snippet is a FUNCTION of module args (`{ pkgs, config, ... }:`), even
 # when it ignores them -- uniformity means a snippet can later start reading
 # `config.services.<x>.port` without its call sites changing.  They are
@@ -58,6 +62,36 @@ let
             (lib.removeSuffix ".nix" name)
             (import (./profiles + "/${name}") { inherit pkgs config lib mcp; })
     ) (lib.filterAttrs isSnippet entries);
+
+    # Repo-shipped skills: one subdirectory per skill under ./skills/, each
+    # holding a SKILL.md (plus optional references/, scripts/, ...).  Discovered
+    # with readDir exactly like ./mcp, so adding hermes/skills/foo/SKILL.md makes
+    # `skills.foo` exist with no registration step.
+    #
+    # Each value is a STORE PATH containing that one skill, shaped
+    # `<store-path>/<name>/SKILL.md` -- the layout Hermes' external-skills walker
+    # expects (it rglobs for SKILL.md, so the skill's own directory level must be
+    # present).  Consumed via `settings.skills.external_dirs`, which is the
+    # sanctioned read-only hatch: modules/services/hermes/hermes.nix deliberately
+    # does NOT manage ~/.hermes/skills/ so that a rebuild cannot wipe hand- or
+    # agent-authored skills.  Never copy one of these into that tree.
+    #
+    # LAZINESS, same as mcp/profiles: this is a `let` binding inside the
+    # registry, and `pkgs` is only forced when a caller actually reads a skill
+    # path.  secrets/secrets.nix plain-imports hermes/users/*.nix with
+    # `pkgs = null` and must keep working, so nothing on that path may force
+    # this -- do not turn it into a module argument and do not make any user
+    # file force it unconditionally.
+    skills = let
+        entries = builtins.readDir ./skills;
+        isSkill = name: type:
+            type == "directory" && builtins.pathExists (./skills + "/${name}/SKILL.md");
+    in lib.mapAttrs (name: _:
+        pkgs.runCommand "hermes-skill-${name}" { } ''
+            mkdir -p "$out"
+            cp -r ${./skills + "/${name}"} "$out/${name}"
+        ''
+    ) (lib.filterAttrs isSkill entries);
 in {
-    inherit mcp profiles;
+    inherit mcp profiles skills;
 }

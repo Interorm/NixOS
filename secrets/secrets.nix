@@ -8,10 +8,10 @@ let
   # `//` across all of them gives the `agents` set this file needs.
   #
   # The dummy nulls work because Nix is lazy and this file only ever reads
-  # `sshKeys` / `googleWorkspace.enable`.  The user files bind the MCP and
-  # profile registries (hermes/lib.nix) in a `let`, which is never forced on
-  # this path -- that is exactly why lib.nix is `let`-bound there rather than
-  # taken as a module argument, which would force it and break `agenix -e`.
+  # `sshKeys`.  The user files bind the MCP, profile and skill registries
+  # (hermes/lib.nix) in a `let`, which is never forced on this path -- that is
+  # exactly why lib.nix is `let`-bound there rather than taken as a module
+  # argument, which would force it and break `agenix -e`.
   agentFiles = [
     ../hermes/users/karl.nix
     ../hermes/users/joni.nix
@@ -63,24 +63,35 @@ let
     value = agentRules.${name};
   }) (builtins.attrNames agentRules));
 
-  # Agents with googleWorkspace.enable additionally get google-<name>.age,
-  # holding their OAuth client secret JSON.  Derived from the same profile, so
-  # enabling the option in hermes/users/<name>.nix is the only edit needed -- the
-  # rule appears here on its own.
-  googleAgents = builtins.filter
-    (name: (agents.${name}.googleWorkspace or { }).enable or false)
-    (builtins.attrNames agents);
-
-  googleSecrets = builtins.listToAttrs (map (name: {
-    name = "google-${name}.age";
-    value = agentRules.${name};
-  }) googleAgents);
-
   # --- machine-level secrets ---------------------------------------------
   # Owned by the machine, not a person: consumed by a system service.
   machineSecrets = {
     "tailscale-homeserver.age".publicKeys = [ admin homeserver ];
     "restic-homeserver.age".publicKeys = [ admin homeserver ];
+
+    # The Google OAuth *client secret* -- ONE file for the whole fleet.
+    #
+    # Was `google-<agent>.age`, derived per google-enabled agent.  That was
+    # wrong on the facts: the plaintext is a single app credential downloaded
+    # once from the Cloud Console, byte-identical for every agent, and it is NOT
+    # personal data -- it identifies the OAuth *application*, not a person or a
+    # mailbox.  Deriving one copy per agent meant N identical ciphertexts to
+    # rekey whenever the app credential rotated, and an extra rule here every
+    # time Google was enabled for someone.
+    #
+    # Being machine-level is also what makes it least-privilege-correct: the
+    # recipients are the host (which must decrypt at activation) and the admin
+    # (who must be able to replace it when the Cloud Console credential
+    # rotates).  An agent never needs to EDIT it, only to read the decrypted
+    # copy -- and modules/services/hermes/hermes.nix fans this one file out to
+    # /run/agenix/google-<agent>, owner <agent>, 0400, so per-agent isolation
+    # of the DECRYPTED copy is unchanged.
+    #
+    # Note the asymmetry with the OAuth token, which is deliberately NOT here:
+    # a desktop-client secret is weakly secret (PKCE is what protects the flow)
+    # and reproducible; the refresh token is genuinely dangerous and can never
+    # be reproducible, because only an interactive human consent mints it.
+    "google-client.age".publicKeys = [ admin homeserver ];
   };
 in
-hermesSecrets // googleSecrets // machineSecrets
+hermesSecrets // machineSecrets

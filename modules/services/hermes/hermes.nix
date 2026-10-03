@@ -9,6 +9,13 @@
     # google_auth_oauthlib / googleapiclient; on NixOS there is no pip install
     # into a read-only store, so the interpreter has to carry them.  All three
     # are prebuilt in nixpkgs -- a download, not a compile.
+    #
+    # ALSO the interpreter for this module's own Google wrappers (see
+    # googleFor below), deliberately: the auth CLI and the vendored
+    # google_api.py must never run under different interpreters.  The vendored
+    # skill's setup.py pins exact versions and calls `pip install` when they do
+    # not match, which cannot work against a read-only store -- so the fleet
+    # pins ONE interpreter here and everything Google-shaped uses it.
     googlePython = pkgs.python3.withPackages (ps: with ps; [
         google-auth
         google-auth-oauthlib
@@ -17,14 +24,57 @@
 
     # Where an agent's Google OAuth *client secret* comes from.  Mirrors
     # environmentFile: agenix when that backend is on, a plain path otherwise.
+    #
     # NOTE this is the client secret (downloaded from Cloud Console), not the
-    # OAuth token -- the token is minted by the consent flow on the machine and
-    # lives in ~/.hermes/google_token.json, which no deployment system can
-    # pre-seed.
+    # OAuth token.  The two have opposite properties:
+    #
+    #   client secret  fleet-level app credential, identical for every agent,
+    #                  weakly secret (a desktop/"installed" client's secret is
+    #                  not a real secret -- PKCE is what protects the flow),
+    #                  and therefore REPRODUCIBLE: one agenix'd ciphertext in
+    #                  the repo, fanned out per agent at 0400.
+    #   OAuth token    per ACCOUNT, holds a refresh token (the genuinely
+    #                  dangerous half), minted by an interactive consent on the
+    #                  machine, and therefore NOT reproducible by any
+    #                  deployment system.  Lives in the agent's home at
+    #                  ~/.hermes/google/<account>/google_token.json, 0600.
+    #
+    # The path is per-agent (/run/agenix/google-<name>) even though the
+    # ciphertext is shared, so each agent gets its own 0400 decryption and no
+    # agent can read another's -- see the age.secrets fan-out at the bottom of
+    # this file.
     googleClientSecretPath = name:
         if cfg.secretsBackend == "agenix"
         then config.age.secrets."google-${name}".path
         else "${cfg.secretsDir}/google-${name}.json";
+
+    # The capability vocabulary and its resolution, as plain data: no pkgs, no
+    # config.  Imported here so the option TYPE for
+    # `google.accounts.<n>.capabilities` is `enum <the valid names>` and a typo
+    # is an eval error naming the valid set, produced by the module system
+    # rather than by a hand-written assertion.
+    googleLib = import ../../../hermes/google { inherit lib; };
+
+    # The generated per-agent Google CLIs + manifest + skill store path, or
+    # null for an agent that declares no account.
+    #
+    # Lazy on purpose: an agent with no Google accounts never forces this, so
+    # googlePython and the wrappers stay out of that host's closure entirely.
+    #
+    # `hermesHome` must match where this module actually puts the agent's
+    # Hermes home (see the activation entries below) -- the wrappers derive
+    # every token path from it, and google_api.py derives its token path from
+    # HERMES_HOME, so a mismatch would silently point the CLI at a token that
+    # is never written.
+    googleFor = name: agent:
+        if agent.google.accounts == { } then null
+        else import ../../../hermes/google/wrappers.nix {
+            inherit pkgs lib googlePython;
+            agent = name;
+            accounts = agent.google.accounts;
+            clientSecretFile = agent.google.clientSecretFile;
+            hermesHome = "/home/${name}/.hermes";
+        };
 
     # The PDF -> docling hook, with its URL and timeout baked in.  A hook is
     # spawned by Hermes as a bare subprocess with no shell profile, so
@@ -311,7 +361,14 @@
     # exposes.  That sameness is deliberate: the hermes package (including the
     # `dependencyGroups` extras, which are baked in at build time) is ONE
     # derivation, and every agent's profile symlinks to it.
-    mkHome = name: agent: { lib, pkgs, ... }: {
+    mkHome = name: agent: { lib, pkgs, ... }: let
+        # This agent's generated Google CLIs, or null when it declares no
+        # account.  Bound once here so the four consumers below (extraPackages,
+        # settings.skills.external_dirs, the manifest activation entry, and the
+        # token-dir activation entry) cannot drift apart or disagree about the
+        # store paths.
+        gapi = googleFor name agent;
+    in {
         imports = [ inputs.hermes-agent.homeManagerModules.default ];
 
         home.username = name;
@@ -394,7 +451,13 @@
             # it has a dead board with a misdiagnosing error message.
             extraPackages = agent.extraPackages
                 ++ [ pkgs.systemd ]
-                ++ lib.optional agent.googleWorkspace.enable googlePython;
+                # Google: the interpreter carrying the API client libraries,
+                # plus one generated CLI per account (hermes-google-<account>)
+                # and the three shared ones (auth / status / gmail).  Derived
+                # from `google.accounts`, so declaring an account puts its
+                # command on the agent's PATH with no second edit -- and an
+                # agent with no accounts gets none of this in its closure.
+                ++ lib.optionals (gapi != null) ([ googlePython ] ++ gapi.packages);
 
             # Fleet-wide servers first, per-agent second.  `//` is a shallow
             # merge: a per-agent server with the same name replaces the
@@ -415,6 +478,16 @@
                     default = agent.model;
                     api_key = "\${OPENAI_API_KEY}";
                 };
+            } // lib.optionalAttrs (gapi != null) {
+                # The repo-shipped google-oauth skill, as a READ-ONLY STORE
+                # PATH.  external_dirs is the sanctioned hatch: this module
+                # deliberately does not manage ~/.hermes/skills/ (see the
+                # `profiles` option's description) so a rebuild cannot wipe
+                # hand- or agent-authored skills, and copying a skill in there
+                # would do exactly that.  A store path instead means the skill
+                # is versioned with the flake, immutable at runtime, and
+                # re-derived on every rebuild.
+                skills.external_dirs = [ "${gapi.skillsDir}" ];
             } // lib.optionalAttrs cfg.doclingPdfHook.enable {
                 # Fleet-wide, not per-agent: "every PDF goes through docling"
                 # is a property of the host's document pipeline, so it is one
@@ -515,6 +588,32 @@
                 (lib.hm.dag.entryBefore [ "hermesAgentSetup" ]
                     (mkProfileCreateScript name agent));
 
+        # ~/.hermes/google/accounts.json -- the static manifest behind the CLI.
+        #
+        # `install -D -m 0600`, ordered exactly like hermesProfileEnv above:
+        # entryAfter "hermesAgentSetup" guarantees the Hermes home exists and
+        # the agenix secret is already decrypted.  A full overwrite, not a
+        # merge, so the file is EXACT after every rebuild -- removing an account
+        # from Nix removes it here, which a deep-merge (the trap config.yaml
+        # falls into, see pruneMcpScript) would not do.
+        #
+        # install -D creates ~/.hermes/google/ as a side effect, which is also
+        # the parent of every per-account token directory.
+        #
+        # The agent's primary interface is the CLI (`hermes-google-status`),
+        # which reads LIVE token state; this file is the static policy data
+        # behind it, and it is what a human or a script can diff against the
+        # Nix source. Contains PATHS only, never a secret.
+        home.activation.hermesGoogleManifest = lib.mkIf (gapi != null) (
+            lib.hm.dag.entryAfter [ "hermesAgentSetup" ] ''
+                $DRY_RUN_CMD ${pkgs.coreutils}/bin/install -D -m 0600 \
+                    ${gapi.manifest} \
+                    ${lib.escapeShellArg "/home/${name}/.hermes/google/accounts.json"}
+                $DRY_RUN_CMD ${pkgs.coreutils}/bin/chmod 0700 \
+                    ${lib.escapeShellArg "/home/${name}/.hermes/google"}
+            ''
+        );
+
         # Drop mcp_servers this config no longer declares.  MUST run after
         # hermesAgentSetup, which is what writes (merges) config.yaml -- the
         # stale keys do not exist to prune until that has run.  See
@@ -611,7 +710,21 @@
         fi
     '') (lib.attrNames agent.profiles);
 
-    agentSubmodule = lib.types.submodule ({ name, ... }: {
+    agentSubmodule = lib.types.submodule ({ name, ... }@submoduleArgs: let
+        # The agent's own name, bound before any nested submodule can shadow
+        # `name` with its own entity name (google.accounts.<account> does
+        # exactly that).  Without this, a per-account default that needs the
+        # AGENT's name would silently get the ACCOUNT's.
+        agentName = name;
+
+        # This agent's OWN resolved config, reached through the @-pattern rather
+        # than by adding `config` to the argument list.  Naming it `config` here
+        # would SHADOW the file-level NixOS `config` that several defaults in
+        # this submodule read inline (environmentFile reaches
+        # `config.age.secrets."hermes-<name>".path`), turning them into silent
+        # lookups against the wrong attrset.
+        selfCfg = submoduleArgs.config;
+    in {
         options = {
             model = lib.mkOption {
                 type = lib.types.str;
@@ -687,56 +800,308 @@
                 description = "Tools the agent may call from its terminal.";
             };
 
-            googleWorkspace = {
-                enable = lib.mkOption {
-                    type = lib.types.bool;
-                    default = false;
-                    description = ''
-                        Give this agent the Google Workspace toolchain: Gmail,
-                        Calendar, Drive, Docs, Sheets and Contacts over OAuth,
-                        via the `google-workspace` skill.
-
-                        Adds a python3 carrying google-auth,
-                        google-auth-oauthlib and google-api-python-client to
-                        the agent's PATH (the skill imports them; NixOS cannot
-                        pip install into a read-only store).
-
-                        Credentials are NOT deployed by this option, and two
-                        different things are involved:
-
-                          * the OAuth *client secret* (downloaded from Google
-                            Cloud Console).  Set `clientSecretFile`, or leave
-                            it at its default, which follows `secretsBackend`
-                            exactly like `environmentFile` does:
-                              agenix  -> /run/agenix/google-<name>
-                              envFile -> ''${secretsDir}/google-<name>.json
-
-                          * the OAuth *token*, minted by the consent flow ON
-                            the machine and written to
-                            ~/.hermes/google_token.json (0600).  It contains a
-                            long-lived refresh token, is per-account, and
-                            refreshes itself -- no deployment system can
-                            pre-seed it.  Expect one interactive setup per
-                            agent:
-                              sudo -iu <name> python \
-                                ~/.hermes/skills/productivity/google-workspace/scripts/setup.py \
-                                --client-secret <clientSecretFile>
+            # ---------------------------------------------------------------
+            # Google access: per-account, capability-based, declarative.
+            #
+            # Replaces the old boolean `googleWorkspace.enable`, which could
+            # express exactly one thing -- "this agent gets ALL of Gmail,
+            # Calendar, Drive, Docs, Sheets and Contacts, including send and
+            # delete" -- and nothing narrower.  There was no way to say "read
+            # and label my personal mail but never send as me", which is the
+            # actual requirement.
+            #
+            # ENFORCEMENT NOTE, stated here because it governs how to read
+            # everything below: Google validates every API call against the
+            # scopes baked into the TOKEN minted at the consent screen, and
+            # returns 403 insufficient_permission for anything outside them.
+            # The token is the security boundary -- it holds even if the agent
+            # is confused or has just read a prompt-injecting email.  This
+            # option, the generated manifest and the shipped skill are
+            # ADVISORY: they buy correct behaviour and comprehensible errors,
+            # not safety.  In particular, shrinking `capabilities` here does
+            # NOT shrink a token that was already minted; the account must
+            # re-consent.  `hermes-google-status` prints declared and granted
+            # side by side for exactly this reason.
+            # ---------------------------------------------------------------
+            google = {
+                accounts = lib.mkOption {
+                    default = { };
+                    example = lib.literalExpression ''
+                        {
+                          agent.capabilities = [ "mail.full" "calendar.rw" ];
+                          personal = {
+                            address = "karl@example.com";
+                            capabilities = [ "mail.read" "mail.labels" "mail.rules" ];
+                            purpose = "Read-only triage of Karl's personal mail. Never send.";
+                          };
+                        }
                     '';
+                    description = ''
+                        Google accounts this agent may use, one attribute per
+                        account.  The attribute name is the local handle: it
+                        names the token directory
+                        (`~/.hermes/google/<name>/`), the generated command
+                        (`hermes-google-<name>`) and the `--account` selector.
+                        It is NOT an email address -- see `address` for that.
+
+                        Each declared account automatically gets its OAuth
+                        scopes derived from `capabilities`, a per-account token
+                        home, an entry in `~/.hermes/google/accounts.json`, and
+                        its own generated wrapper on the agent's PATH.  Adding
+                        an account here is the only edit required.
+
+                        One interactive OAuth consent per account is needed
+                        once, on the machine, via `hermes-google-auth <name>`.
+                        That is a legitimate one-time bootstrap: it is NOT
+                        repeated after a `nixos-rebuild`, because the token
+                        lives in the agent's home rather than the store.
+                    '';
+                    type = lib.types.attrsOf (lib.types.submodule ({ name, config, ... }: {
+                        options = {
+                            capabilities = lib.mkOption {
+                                # `enum` from the capability table, so a typo'd
+                                # name fails at EVAL with the valid set printed
+                                # by the type checker -- rather than resolving
+                                # to a missing attribute later, or worse, to an
+                                # empty scope list that only fails at the
+                                # consent screen in a browser.
+                                type = googleLib.capabilityType;
+                                default = [ ];
+                                example = [ "mail.read" "mail.labels" "mail.rules" ];
+                                description = ''
+                                    What this account may do, as capability
+                                    names from `hermes/google/capabilities.nix`.
+                                    Scopes are derived; never write a scope URL
+                                    here or anywhere else.
+
+                                    Valid names:
+                                    ${lib.concatMapStringsSep "\n" (c: "  * ${c}") googleLib.capabilityNames}
+
+                                    /!\ `mail.write` (and `mail.full`) ALSO
+                                    GRANT SEND.  Gmail couples modify and send:
+                                    the set of scopes permitting
+                                    `messages.modify` but not `messages.send`
+                                    is empty.  For auto-labeling without send,
+                                    use `mail.rules` (a server-side Gmail
+                                    filter) and accept that it applies to mail
+                                    arriving from now on.
+                                '';
+                            };
+
+                            address = lib.mkOption {
+                                type = lib.types.nullOr lib.types.str;
+                                default = null;
+                                example = "hermes.agent.karl@gmail.com";
+                                description = ''
+                                    Which Google identity this handle refers
+                                    to.  Printed by `hermes-google-auth` and
+                                    `hermes-google-status` so the human picks
+                                    the right account at the consent screen --
+                                    the single easiest way to ruin a careful
+                                    scope split is to sign in as whichever
+                                    account the browser happened to be in.
+
+                                    Advisory only: nothing can force Google to
+                                    use it.  null means "not pinned", and the
+                                    CLI says so loudly.
+                                '';
+                            };
+
+                            purpose = lib.mkOption {
+                                type = lib.types.str;
+                                default = "";
+                                example = "Read-only triage of Karl's personal mail. Never compose or send.";
+                                description = ''
+                                    Human prose THE AGENT READS, printed by
+                                    `hermes-google-status` and carried in the
+                                    manifest: what this account is for and what
+                                    it must not be used for.
+
+                                    This exists because `capabilities` says
+                                    what an account CAN do and that is not the
+                                    same as what it SHOULD do -- an account
+                                    that technically carries `mail.write` can
+                                    still be meant for reading only.  The
+                                    shipped `google-oauth` skill instructs the
+                                    agent to read this before choosing an
+                                    account.
+
+                                    Advisory, like everything outside the
+                                    token.
+                                '';
+                            };
+
+                            publishing = lib.mkOption {
+                                type = lib.types.enum [ "testing" "production" ];
+                                default = "testing";
+                                description = ''
+                                    Publishing status of the Google Cloud OAuth
+                                    app this account consents through.  Not a
+                                    setting -- a FACT about the Cloud Console,
+                                    recorded here so the consequence is
+                                    visible.
+
+                                    "testing" (the default, and where this
+                                    fleet's app currently is): Google issues
+                                    refresh tokens that EXPIRE AFTER ~7 DAYS
+                                    for users external to the app's own
+                                    project.  The project's own account
+                                    survives; anyone else's does not, and the
+                                    symptom is an opaque auth failure roughly
+                                    weekly.  `hermes-google-status` surfaces
+                                    this caveat per account.
+
+                                    "production" requires Google verification,
+                                    because every Gmail scope is sensitive or
+                                    restricted.
+
+                                    Nix cannot fix this; it can only make it
+                                    visible before it bites.
+                                '';
+                            };
+
+                            project = lib.mkOption {
+                                type = lib.types.nullOr lib.types.str;
+                                default = null;
+                                example = "hermes-personal-readonly";
+                                description = ''
+                                    Optional Google Cloud project this
+                                    account's OAuth client belongs to, when it
+                                    is NOT the fleet default.
+
+                                    Why this exists: the scope list on the Data
+                                    Access page is a PROJECT-level config
+                                    shared by every OAuth client in that
+                                    project.  A "read-only client" inside a
+                                    project that also lists write scopes
+                                    enforces nothing -- a client cannot have a
+                                    narrower ceiling than its project.  The
+                                    only hard, independent ceiling is a
+                                    SEPARATE project (with its own client
+                                    secret).
+
+                                    Recorded for documentation today; a second
+                                    project would also need a second
+                                    `age.secrets` entry for its client secret.
+                                '';
+                            };
+
+                            scopes = lib.mkOption {
+                                type = lib.types.listOf lib.types.str;
+                                readOnly = true;
+                                default = googleLib.scopesFor config.capabilities;
+                                defaultText = lib.literalExpression
+                                    "derived from `capabilities` via hermes/google/capabilities.nix";
+                                description = ''
+                                    Read-only: the deduplicated, sorted OAuth
+                                    scope URLs derived from `capabilities`.
+                                    Exposed so a consumer (and a tier-2 eval)
+                                    can assert on the resolved value rather
+                                    than re-deriving it, which is how a
+                                    "verification" ends up proving only that
+                                    two copies of the same mistake agree.
+                                '';
+                            };
+
+                            tokenPath = lib.mkOption {
+                                type = lib.types.str;
+                                readOnly = true;
+                                default = "/home/${agentName}/.hermes/google/${name}/google_token.json";
+                                defaultText = lib.literalExpression
+                                    "\"/home/<agent>/.hermes/google/<account>/google_token.json\"";
+                                description = ''
+                                    Read-only: where this account's OAuth token
+                                    lands, 0600, written by
+                                    `hermes-google-auth`.
+
+                                    The basename is fixed by the vendored
+                                    google-workspace skill, which computes
+                                    `HERMES_HOME / "google_token.json"`.  The
+                                    per-account DIRECTORY is what makes it
+                                    per-account: the wrappers export
+                                    `HERMES_HOME=~/.hermes/google/<account>`
+                                    and the vendored script needs no patch and
+                                    has no `--account` flag.
+                                '';
+                            };
+                        };
+                    }));
                 };
 
                 clientSecretFile = lib.mkOption {
                     type = lib.types.str;
-                    default = googleClientSecretPath name;
+                    default = googleClientSecretPath agentName;
                     defaultText = lib.literalExpression ''
                         if secretsBackend == "agenix"
                         then config.age.secrets."google-<name>".path
                         else "''${secretsDir}/google-<name>.json"
                     '';
                     description = ''
-                        Path to this agent's Google OAuth client secret JSON.
-                        Passed to the skill's setup script; never read by Nix,
-                        so the file only has to exist when you run the OAuth
-                        flow -- not at build time.
+                        Path to the OAuth *client secret* JSON used when
+                        minting tokens for this agent's accounts.
+
+                        FLEET-LEVEL, not personal: one app credential shared by
+                        every agent and every account, from one
+                        `secrets/google-client.age` fanned out to a per-agent
+                        `/run/agenix/google-<name>` at 0400.  Enabling Google
+                        for a new agent needs no new `.age` file and no new
+                        recipient rule.
+
+                        Read only at consent time, never by Nix, so the file
+                        has to exist when someone runs `hermes-google-auth` --
+                        not at build time.
+                    '';
+                };
+            };
+
+            # Deprecated alias for the whole of the above.  KEPT WORKING on
+            # purpose: Karl merges and rebuilds incrementally, so a single
+            # commit must not break a host that still sets the boolean.
+            #
+            # `mail.full calendar.rw drive.rw sheets.rw docs.rw contacts.ro`
+            # is exactly the SCOPES list the vendored google-workspace
+            # setup.py requests, so a migrated agent's EXISTING token stays
+            # valid with no re-consent.
+            googleWorkspace = {
+                enable = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = ''
+                        DEPRECATED -- use `google.accounts` instead.
+
+                        `googleWorkspace.enable = true` is equivalent to:
+
+                            google.accounts.agent = {
+                              capabilities = [
+                                "mail.full" "calendar.rw" "drive.rw"
+                                "sheets.rw" "docs.rw" "contacts.ro"
+                              ];
+                            };
+
+                        i.e. one account named `agent` with full access,
+                        including SEND and TRASH on Gmail.  That scope list is
+                        byte-identical to what the vendored google-workspace
+                        skill's setup.py has always requested, so an existing
+                        `~/.hermes/google_token.json` remains valid -- moving
+                        it to `~/.hermes/google/agent/google_token.json`
+                        preserves access with no re-consent.
+
+                        The alias is emitted with `lib.mkDefault`, so declaring
+                        `google.accounts.agent.capabilities` yourself REPLACES
+                        it outright rather than merging into a surprising union
+                        of both lists.  A `warnings` entry fires while the
+                        boolean is in use.
+                    '';
+                };
+
+                clientSecretFile = lib.mkOption {
+                    type = lib.types.str;
+                    default = googleClientSecretPath agentName;
+                    defaultText = lib.literalExpression ''google.clientSecretFile'';
+                    description = ''
+                        DEPRECATED -- use `google.clientSecretFile`.  Kept so a
+                        host that set it still evaluates; the value is not read
+                        by anything.
                     '';
                 };
             };
@@ -939,6 +1304,43 @@
                     normal way (`hermes -p <name>` + skill_manage, or the
                     Desktop app), and share them across profiles with
                     `settings.skills.external_dirs` if wanted.
+                '';
+            };
+        };
+
+        # --------------------------------------------------------------- #
+        # Back-compat: the deprecated boolean, expressed as a definition of
+        # the new option rather than as a second code path.
+        #
+        # Defining `google.accounts.agent` from inside the same submodule
+        # that declares it is the ordinary direction (define one option by
+        # reading a DIFFERENT one -- here `googleWorkspace.enable`), so it
+        # does not recurse.  Every downstream consumer -- the wrappers, the
+        # manifest, extraPackages, the age.secrets fan-out -- reads only
+        # `google.accounts`, so there is exactly ONE code path and the
+        # deprecated branch is tested by the same evals as the new one.
+        #
+        # `lib.mkDefault` (priority 1000) so a host that sets both the
+        # boolean and an explicit `google.accounts.agent.capabilities` gets
+        # its own list, not a union of the two -- a union would silently
+        # re-add send to an account somebody was deliberately narrowing.
+        # --------------------------------------------------------------- #
+        config = lib.mkIf selfCfg.googleWorkspace.enable {
+            google.accounts.agent = {
+                capabilities = lib.mkDefault [
+                    "mail.full"
+                    "calendar.rw"
+                    "drive.rw"
+                    "sheets.rw"
+                    "docs.rw"
+                    "contacts.ro"
+                ];
+                purpose = lib.mkDefault ''
+                    The agent's own Google mailbox and workspace (migrated from
+                    the deprecated googleWorkspace.enable boolean).  Full
+                    access: it can read, label, trash AND SEND mail as itself.
+                    This is the agent's OWN identity, not a human's -- do not
+                    use it to act as ${agentName}.
                 '';
             };
         };
@@ -1227,6 +1629,19 @@ in {
             }
         ];
 
+        # Deprecation notice for the boolean, emitted once per agent still
+        # using it.  A `warnings` entry rather than an assertion on purpose:
+        # the boolean must keep WORKING through an incremental migration, so
+        # breaking the build would be exactly wrong.
+        warnings = lib.mapAttrsToList (name: _:
+            "services.hermes-agents.agents.${name}.googleWorkspace.enable is deprecated. "
+            + "It now resolves to google.accounts.agent with full access "
+            + "(mail.full calendar.rw drive.rw sheets.rw docs.rw contacts.ro) -- "
+            + "note mail.full includes SEND. Replace it with an explicit "
+            + "google.accounts block in hermes/users/${name}.nix; see "
+            + "hermes/google/capabilities.nix for the vocabulary."
+        ) (lib.filterAttrs (_: a: a.googleWorkspace.enable) cfg.agents);
+
         # Dashboards are LAN-facing by design; the auth gate is the lock.
         networking.firewall.allowedTCPPorts = allPorts;
 
@@ -1289,9 +1704,27 @@ in {
         # (tmpfs), owned by that agent, 0400: nobody else can read it, not even
         # the other agents.
         #
-        # Agents with googleWorkspace.enable also get google-<name>, holding
-        # their OAuth *client secret* JSON.  (The OAuth token is minted on the
-        # machine by the consent flow and lives in ~/.hermes -- not here.)
+        # Agents with at least one `google.accounts` entry also get
+        # google-<name>, holding the OAuth *client secret* JSON.  (The OAuth
+        # token is minted on the machine by the consent flow and lives in
+        # ~/.hermes/google/<account>/ -- not here.)
+        #
+        # ONE CIPHERTEXT, FANNED OUT PER AGENT.  Several age.secrets entries
+        # may legitimately share a `file`: agenix decrypts it once per entry,
+        # so secrets/google-client.age becomes
+        #
+        #   /run/agenix/google-karl   owner karl  0400
+        #   /run/agenix/google-nana   owner nana  0400
+        #   ...
+        #
+        # That keeps strict per-agent 0400 isolation (no agent can read
+        # another's copy) while the repo holds a single file with a single
+        # recipient rule.  Enabling Google for a new agent therefore needs NO
+        # new .age file and NO new rule in secrets/secrets.nix.
+        #
+        # Deliberately NOT a shared group on one file: a group would widen who
+        # can read the plaintext and would add a group to the system's
+        # vocabulary for no gain -- the fan-out costs nothing but a decrypt.
         #
         # The .age files must exist in secrets/ and have rules in
         # secrets/secrets.nix; see secrets/README.md.
@@ -1304,11 +1737,11 @@ in {
             }) cfg.agents)
             //
             (lib.mapAttrs' (name: _: lib.nameValuePair "google-${name}" {
-                file = ../../../secrets/google-${name}.age;
+                file = ../../../secrets/google-client.age;
                 owner = name;
                 group = name;
                 mode = "0400";
-            }) (lib.filterAttrs (_: a: a.googleWorkspace.enable) cfg.agents))
+            }) (lib.filterAttrs (_: a: a.google.accounts != { }) cfg.agents))
         );
     };
 }
