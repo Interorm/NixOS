@@ -1,26 +1,3 @@
-# hermes/google/default.nix -- capability resolution and validation.
-#
-# Turns the plain data in ./capabilities.nix into the three things the NixOS
-# module actually needs:
-#
-#   capabilityType   a `lib.types.enum` so an unknown capability name is an
-#                    EVAL ERROR that names the valid set, produced by the type
-#                    system rather than by a hand-written assertion.
-#   scopesFor        [ capability ] -> deduplicated, sorted [ scope-url ]
-#   remediationFor   "this account cannot do X; the capability that would
-#                    grant it is Y, and here is what Y also implies"
-#
-# DERIVED, NOT DUPLICATED: every scope URL in this repo comes from
-# ./capabilities.nix.  Nothing here, in hermes.nix, in a wrapper, or in the
-# generated manifest restates one.  Add a capability to that file and it is
-# immediately a legal value of `google.accounts.<n>.capabilities`, appears in
-# the eval-error message for a typo, and flows into the wrappers and the
-# manifest with no second edit.
-#
-# Takes only `lib`.  No `pkgs`, no `config`, no module arguments -- so this is
-# importable from any context (a plain `nix eval`, an agenix rules file) and
-# cannot drag NixOS evaluation in behind it.  The derivations that need `pkgs`
-# live in ./wrappers.nix, which is a separate import for exactly that reason.
 { lib, ... }:
 
 let
@@ -28,12 +5,6 @@ let
 
     names = builtins.attrNames capabilities;
 
-    # Capabilities whose scope set permits sending mail as the account.
-    # Derived by asking the table, so adding a send-capable capability above
-    # updates every error message that mentions sending.  `gmail.modify` is in
-    # here because Google couples modify and send -- see the /!\ block in
-    # ./capabilities.nix; that coupling is a fact about Gmail, so it is encoded
-    # once, here, next to the only place it is consumed.
     sendScopes = [
         "https://www.googleapis.com/auth/gmail.send"
         "https://www.googleapis.com/auth/gmail.compose"
@@ -47,22 +18,7 @@ in
 rec {
     inherit capabilities;
 
-    # The valid capability names, sorted.  Printed in error messages and in
-    # `hermes-google-status`, so a human never has to open this file to find
-    # out what they may write.
     capabilityNames = builtins.sort (a: b: a < b) names;
-
-    # The option type for `google.accounts.<n>.capabilities`.
-    #
-    # `enum` is the point of this whole file: a typo'd capability fails at EVAL
-    # with the valid set in the message, from the type checker --
-    #
-    #   error: value "mail.readonly" is not one of
-    #     "calendar.ro", "calendar.rw", "contacts.ro", ... "mail.read", ...
-    #
-    # rather than resolving to `capabilities.mail-raedonly` = null and
-    # producing an account with an empty scope list that fails only at the
-    # consent screen, hours later, in a browser.
     capabilityType = lib.types.listOf (lib.types.enum capabilityNames);
 
     # [ capability ] -> sorted, deduplicated [ scope-url ].
@@ -106,9 +62,6 @@ rec {
         };
     };
 
-    # Everything a wrapper or the manifest needs to explain itself, as plain
-    # JSON-able data.  Bundled here so ./wrappers.nix never reaches into the
-    # capability table directly -- one consumer, one interface.
     reference = {
         inherit capabilityNames;
         scopes = capabilities;

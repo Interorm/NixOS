@@ -21,8 +21,8 @@ in {
         dashboardHost = "0.0.0.0";
         dependencyGroups = [ "messaging" "anthropic" ];
 
-        secretsBackend = "agenix";
         doclingPdfHook.enable = enable_docling;
+
 
         mcpServers = { };
 
@@ -47,30 +47,6 @@ in {
                 };
             };
 
-            # Make each agent's ONE gateway serve every profile in that
-            # agent's home, rather than only the top-level profile.
-            #
-            # This is REQUIRED for per-profile cron to work at all, and the
-            # failure mode without it is silent.  Cron stores are
-            # per-profile by design (cron/jobs.py anchors JOBS_FILE at the
-            # ACTIVE profile's HERMES_HOME, explicitly rejecting a shared
-            # root so a job runs with its own profile's .env/config/skills).
-            # A non-multiplexing gateway only ticks the store belonging to
-            # the profile it was launched as -- so a job created under
-            # `hermes -p finance` lands in profiles/finance/cron/jobs.json,
-            # which no ticker owns.  It then sits there looking perfectly
-            # scheduled and never fires (upstream #4707 / #25290 / #32091).
-            #
-            # With this on, the built-in ticker walks EVERY served profile's
-            # cron store each cycle, with heartbeats and recovery scoped per
-            # profile, and startup MCP discovery likewise runs once per
-            # profile.  Note an external cron.provider cannot do this and
-            # fails closed to the built-in ticker.
-            #
-            # Fleet-wide rather than per-agent: "one gateway per Unix user
-            # serves that user's profiles" is a property of this host's
-            # topology, like modelBaseUrl -- and an agent that silently had
-            # it off would have dead cron jobs with no visible cause.
             gateway.multiplex_profiles = true;
         };
     };

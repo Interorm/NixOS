@@ -98,21 +98,13 @@ in {
 
                 DOCLING_SERVE_MAX_SYNC_WAIT = "1200";
 
-                # One worker, one shared set of models.  The previous value of
-                # 4 with SHARE_MODELS unset is what made this OOM on the GPU:
-                # each worker thread allocates its OWN copy of the layout and
-                # tableformer models, so "4 workers" meant 4x the VRAM for a
-                # box that converts documents one at a time.
                 DOCLING_SERVE_ENG_LOC_NUM_WORKERS = "1";
                 DOCLING_SERVE_ENG_LOC_SHARE_MODELS = "true";
 
                 UVICORN_WORKERS = "1";
             } // (
                 if cfg.gpu != null then {
-                    DOCLING_DEVICE = "cuda:0";   # index *within* the container
-                    # Pages held in flight at once.  Lower than the default 4
-                    # because peak VRAM scales with it and the budget here is
-                    # ~3 GB, not a whole card.
+                    DOCLING_DEVICE = "cuda:0";   
                     DOCLING_PERF_PAGE_BATCH_SIZE = "2";
                 } else {
                     DOCLING_DEVICE = "cpu";
@@ -123,20 +115,10 @@ in {
                 PYTORCH_CUDA_ALLOC_CONF = "per_process_memory_fraction:${cfg.memoryFraction}";
             } // cfg.environment;
 
-            # CDI, matching speaches.nix.  Exposing exactly one GPU is also
-            # why DOCLING_DEVICE is cuda:0 regardless of `gpu`: the container
-            # sees a single device and numbers it from zero.
             extraOptions = lib.optionals (cfg.gpu != null) [
                 "--device=nvidia.com/gpu=${cfg.gpu}"
             ];
         };
-
-        # Start after the llama.cpp servers so they claim their VRAM first.
-        # Ordering only -- no `wants`, docling is useful on a host where they
-        # are absent, and a missing unit here would be a hard dependency
-        # failure.  With the allocator fraction set, losing the race would
-        # cost docling an OOM rather than cost llama.cpp its cache.
-        systemd.services.docker-docling.after = [ "llama-chat.service" "llama-code.service" ];
 
         networking.firewall.allowedTCPPorts = [ cfg.port ];
     };
