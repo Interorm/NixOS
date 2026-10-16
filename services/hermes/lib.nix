@@ -94,6 +94,4 @@ let
     ) (lib.filterAttrs isSkill entries);
 in {
     inherit mcp profiles skills;
-
-    imports = [./firecrawl/firecrawl.nix];
 }
