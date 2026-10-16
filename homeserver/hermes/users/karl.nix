@@ -45,17 +45,10 @@ in {
                     "contacts.ro"
                 ];
                 purpose = ''
-                    The agent's OWN Google account (hermes.agent.karl@gmail.com)
-                    -- an identity belonging to the assistant, not to Karl.
+                    The agent's OWN Google account (hermes.agent.karl@gmail.com) -- an identity belonging to the assistant, not to Karl.
+                    Full access: read, label, trash and SEND mail, plus Calendar, Drive, Sheets, Docs and read-only Contacts.
 
-                    Full access: read, label, trash and SEND mail, plus
-                    Calendar, Drive, Sheets, Docs and read-only Contacts.
-
-                    Mail sent from here is from the assistant and is identifiable
-                    as such.  Never use it to impersonate Karl or to act as his
-                    personal mailbox -- that is a different account, with
-                    deliberately narrower capabilities, and it is listed
-                    separately by `hermes-google-status` when it exists.
+                    Mail sent from here is from the assistant and is identifiable as such.  Never use it to impersonate Karl or to act as his personal mailbox -- that is a different account, with deliberately narrower capabilities, and it is listed separately by `hermes-google-status` when it exists.
                 '';
             };
 
@@ -63,9 +56,25 @@ in {
                 address = "karlhenriklohmann@gmail.com";
                 capabilities = [
                     "mail.read" "mail.labels" "mail.rules"
-                    "calendar.ro" "drive.ro"
+                    "calendar.rw" "drive.ro"
                     "sheets.ro" "docs.ro"
                 ];
+                purpose = ''
+                    Karls personal email. As his personal assistant, treat this as information needed for helping with managing daily life. 
+                    NEVER send or write emails, only help by reading emails for summaries, labelling them for Karl and getting a picture of what is going on in his life that will aid your personal assistant role. 
+                    Again, NEVER use this email for anything other as input.
+                '';
+            };
+
+            network-pluralist-econ = {
+                address = "klohmann@econ4future.org";
+                capabilities = [
+                    "mail.read" "calendar.ro" "drive.ro"
+                ];
+                purpose = ''
+                    Karl is boardmember at the Netzwerk Plurale Ökonomik. This is his work email that receives all important communication and holds access to the organizations documents and calendars.
+                    Like the personal email, this is pure INPUT. NEVER use this email yourself or alter any documents or calendar entries, just use it for retrieving information about what is going on at his work.
+                '';
             };
         };
         mcpServers = {
