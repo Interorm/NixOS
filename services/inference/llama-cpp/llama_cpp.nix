@@ -79,7 +79,7 @@ in {
     config = lib.mkIf (cfg.instances != {})  {
 
         assertions = [{
-            assertion = lib.length (lib.attrValues (instance: instance.port) cfg.instances) == lib.length (lib.unique (map (instance: instance.port) cfg.instances));
+            assertion = lib.length (map (i: i.port) (lib.attrValues cfg.instances)) == lib.length (lib.unique (map (i: i.port) (lib.attrValues cfg.instances)));
             message = "All llama-cpp instances must have unique ports";
         }];
 
