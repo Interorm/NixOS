@@ -3,32 +3,29 @@
     ...
 }: let
 
-    cfg = config.services.llama_cpp;
+    cfg = config.services.llama-cpp;
 
     llamacpp = (pkgs.llama-cpp.override {
         cudaSupport = true;
     }).overrideAttrs (oldAttrs: {
         cmakeFlags = (oldAttrs.cmakeFlags or []) ++ [
-            "-DGGML_CUDA=" + (if cfg.cuda then "ON" else "OFF")
+            ("-DGGML_CUDA=" + (if cfg.cuda then "ON" else "OFF"))
             "-DGGML_CUDA_F16=OFF"
-            "-DCMAKE_CUDA_ARCHITECTURES=" + (toString cfg.cuda_architecture) 
+            ("-DCMAKE_CUDA_ARCHITECTURES=" + (toString cfg.cuda_architecture)) 
         ];
     });
 
-    settingsArgs = lib.concatStringsSep " " (lib.concatMap (name: value:
-        if value == true
-        then [ "--${name}" ]
-        else if value == false
-        then [ "--no-${name}" ]
-        else if lib.isList value
-        then lib.concatMap (v: [ "--${name}" (toString v) ]) value
+    argPairs = attrs: lib.concatLists (lib.mapAttrsToList (name: value:
+        if value == true then [ "--${name}" ]
+        else if value == false then [ "--no-${name}" ]
+        else if lib.isList value then lib.concatMap (v: [ "--${name}" (toString v) ]) value
         else [ "--${name}" (toString value) ]
-    ) cfg.settings);
+    ) attrs);
 
 in {
     imports = [ ../huggingface-models.nix ];
 
-    options.services.llama_cpp = {
+    options.services.llama-cpp = {
         cuda = lib.mkOption { type = lib.types.bool; default = true; };
 
         cuda_architecture = lib.mkOption {
@@ -40,7 +37,7 @@ in {
 
         modelGateway = lib.mkOption {
             type = lib.types.bool;
-            default = config.service.model-gateway.enable or false;
+            default = config.services.model-gateway.enable or false;
             description = "Automatically add all models from llama-cpp to model-gateway";
         };
 
@@ -82,17 +79,17 @@ in {
     config = lib.mkIf (cfg.instances != {})  {
 
         assertions = [{
-            assertion = lib.length (map (instance: instance.port) cfg.instances) == lib.length (lib.unique (map (instance: instance.port) cfg.instances));
+            assertion = lib.length (lib.attrValues (instance: instance.port) cfg.instances) == lib.length (lib.unique (map (instance: instance.port) cfg.instances));
             message = "All llama-cpp instances must have unique ports";
         }];
 
         environment.systemPackages = [ llamacpp ];
         
-        services.huggingface-models.models = lib.mapAttrs (name: model: 
-            { ${name} = { repo = m.model.repo; file = m.model.file; target = "${name}.gguf"; }; } // 
+        services.huggingface-models.models = lib.mkMerge (lib.mapAttrsToList (name: m:
+            { ${name} = { repo = m.model.repo; file = m.model.file; target = "${name}.gguf"; }; } //
             lib.optionalAttrs (m.model.mtp != null) { "${name}-mtp" = { repo = m.model.repo; file = m.model.mtp; target = "${name}-mtp.gguf"; }; } //
             lib.optionalAttrs (m.model.mmproj != null) { "${name}-mmproj" = { repo = m.model.repo; file = m.model.mmproj; target = "${name}-mmproj.gguf"; }; }
-        ) cgf.instances;
+        ) cfg.instances);
 
         systemd.services = lib.mapAttrs (name: m: {
             description = "llama.cpp server (${name})";
@@ -109,17 +106,17 @@ in {
                 Environment = if m.device != null then "CUDA_VISIBLE_DEVICES=${toString m.device}" else "";
                 ExecStart = lib.escapeShellArgs (
                     [ "${llamacpp}/bin/llama-server" "--model" config.services.huggingface-models.paths.${name} ]
-                    ++ lib.optionals (m.model.mtp != null) [ "--model-draft" config.services.huggingface-models.paths.${name}-mtp ]
-                    ++ lib.optionals (m.model.mmproj != null) [ "--mmproj" config.services.huggingface-models.paths.${name}-mmproj ]
+                    ++ lib.optionals (m.model.mtp != null) [ "--model-draft" config.services.huggingface-models.paths."${name}-mtp" ]
+                    ++ lib.optionals (m.model.mmproj != null) [ "--mmproj" config.services.huggingface-models.paths."${name}-mmproj" ]
                     ++ [ "--alias" "${name}" ]
-                    ++ lib.flatten (lib.mapAttrs settingsArgs m.arguements)
+                    ++ argPairs m.arguements
                 );
                 Restart = "always";
                 RestartSec = "5";
             };
         }) cfg.instances;
 
-        networking.firewall.allowedTCPPorts = lib.map (m: m.port) (lib.attrValues cfg.instances);
+        networking.firewall.allowedTCPPorts = map (m: m.port) (lib.attrValues cfg.instances);
 
         services.model-gateway.endpoints = lib.mkMerge (lib.mapAttrsToList (name: m: {
             ${name} = { url = "http://${m.host}:${toString m.port}"; };

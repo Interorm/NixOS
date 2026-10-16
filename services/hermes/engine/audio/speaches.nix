@@ -80,7 +80,7 @@ in {
             extraOptions = if cfg.gpu != null then [ "--device=nvidia.com/gpu=${cfg.gpu}" ] else [];
         };
 
-        networking.firewall.allowedTCPPorts = [ ${toString cfg.port} ];
+        networking.firewall.allowedTCPPorts = [ cfg.port ];
 
 
         systemd.services.docker-speaches = {

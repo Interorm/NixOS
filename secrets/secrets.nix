@@ -1,17 +1,14 @@
 let
-  agentFiles = [
-    ../hermes/users/karl.nix
-    ../hermes/users/joni.nix
-    ../hermes/users/nana.nix
-    ../hermes/users/sabine.nix
-  ];
-
-  dummyArgs = { pkgs = null; config = null; lib = null; };
+  usersDir = ../homeserver/hermes/users;
+  userFiles = builtins.filter
+    (n: builtins.match ".*\\.nix" n != null)
+    (builtins.attrNames (builtins.readDir usersDir));
 
   agents = builtins.foldl'
-    (acc: f: acc // (import f dummyArgs).services.hermes-agents.agents)
-    {}
-    agentFiles;
+    (acc: f: acc // (import (usersDir + "/${f}") dummyArgs).services.hermes-agents.agents)
+    { } userFiles;
+
+  dummyArgs = { pkgs = null; config = null; lib = null; };
 
   homeserver = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHqEd/Iew4ztsH+j5G1gsL9332sccR/5Aiq8Wl3AUpt9 root@nixos";
   admin = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMH2S3ZA0agXgsNM8RWJ1JvJrfe2Bq00Zc2mQwmjhAjX karli@Karls-Surface";

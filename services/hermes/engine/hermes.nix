@@ -629,6 +629,15 @@ in {
         apiPorts = lib.filter (p: p != null) (map (a: a.apiServerPort) agentList);
         dashPorts = map (a: a.dashboard.port) (lib.filter (a: a.dashboard.enable) agentList);
         allPorts = dashPorts ++ apiPorts;
+
+        declaredMcpNames = lib.unique (
+            lib.concatMap (agent:
+                lib.attrNames agent.mcpServers
+                ++ lib.concatMap (p: lib.attrNames p.mcpServers) (lib.attrValues agent.profiles)
+            ) agentList
+            ++ lib.attrNames cfg.mcpServers
+        );
+
     in lib.mkIf cfg.enable {
         assertions = [
             {
@@ -650,6 +659,8 @@ in {
 
         # Dashboards are LAN-facing by design; the auth gate is the lock.
         networking.firewall.allowedTCPPorts = allPorts;
+
+        services.firecrawl.enable = lib.elem "firecrawl" declaredMcpNames;
 
         systemd.tmpfiles.rules = [
             "d ${cfg.secretsDir} 0755 root root - -"

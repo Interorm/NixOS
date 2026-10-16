@@ -62,10 +62,9 @@ in {
             personal = {
                 address = "karlhenriklohmann@gmail.com";
                 capabilities = [
-                    "mail.read"
-                    "calendar.read"
-                    "drive.read"
-                    "sheets.read"
+                    "mail.read" "mail.labels" "mail.rules"
+                    "calendar.ro" "drive.ro"
+                    "sheets.ro" "docs.ro"
                 ];
             };
         };
