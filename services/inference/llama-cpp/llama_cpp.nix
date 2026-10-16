@@ -109,6 +109,7 @@ in {
                     ++ lib.optionals (m.model.mtp != null) [ "--model-draft" config.services.huggingface-models.paths."${name}-mtp" ]
                     ++ lib.optionals (m.model.mmproj != null) [ "--mmproj" config.services.huggingface-models.paths."${name}-mmproj" ]
                     ++ [ "--alias" "${name}" ]
+                    ++ [ "--host" m.host "--port" "${toString m.port}" ]
                     ++ argPairs m.arguements
                 );
                 Restart = "always";
