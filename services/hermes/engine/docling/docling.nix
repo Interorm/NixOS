@@ -9,75 +9,27 @@ in {
         port = lib.mkOption {
             type = lib.types.port;
             default = 3070;
-            description = ''
-                Host port the container's 5001 is published on, and the single
-                source of truth for the URL: anything that talks to docling
-                (the Hermes PDF hook, see services.hermes-agents.doclingPdfHook)
-                derives it from here rather than repeating the number.
-            '';
+            description = "Port for docling service";
         };
 
         gpu = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
             example = "0";
-            description = ''
-                CDI device index handed to the container, as in
-                `--device=nvidia.com/gpu=<gpu>`, and the GPU `DOCLING_DEVICE`
-                is pointed at.  null keeps docling on the CPU.
-
-                On this host both GPUs already hold a llama.cpp server, so the
-                choice is about which model tolerates a smaller KV cache, not
-                which card is free -- see `memoryFraction`.
-            '';
+            description = "GPU device index. null indecates CPU-only";
         };
 
         memoryFraction = lib.mkOption {
             type = lib.types.nullOr lib.types.str;
             default = null;
             example = "0.24";
-            description = ''
-                Fraction of the *whole* card PyTorch's caching allocator may
-                hand out, via
-                `PYTORCH_CUDA_ALLOC_CONF=per_process_memory_fraction:<x>`.
-                Only meaningful together with `gpu`.
-
-                This is the hard cap that keeps docling from evicting
-                llama.cpp: past it PyTorch raises OOM inside docling instead
-                of competing for the last free megabytes.  The CUDA context
-                itself (~300 MB) sits OUTSIDE the fraction, so budget
-
-                    fraction x VRAM + 0.3 GB ~= what docling really occupies
-
-                0.24 of an 11 GB 1080 Ti is ~2.7 GB allocator, ~3.0 GB total.
-
-                Requires torch >= 2.10 -- the key did not exist in 2.9 and
-                earlier, where it is silently rejected as an unrecognised
-                allocator option.  The pinned image below satisfies this.
-            '';
+            description = "Fraction of card VRAM docling is allowed to allocate. Set via pytorch environment variable.";
         };
 
         image = lib.mkOption {
             type = lib.types.str;
             default = "quay.io/docling-project/docling-serve-cu126:v1.12.0";
-            description = ''
-                Container image.  Pinned, and pinned to the *cu126* line, for
-                one reason: this host's GPUs are Pascal (GTX 1080 Ti / 1070 Ti,
-                sm_61) and upstream PyTorch only ships Maxwell/Pascal cubins in
-                its CUDA 12.6 builds.  See pytorch's
-                `.ci/manywheel/build_cuda.sh`, where 12.6 alone prepends
-                `5.0;6.0` to TORCH_CUDA_ARCH_LIST while the 12.8 and 13.0 cases
-                do not.  A cu128/cu130 image starts, loads, and then fails at
-                the first kernel launch with "no kernel image is available for
-                execution on the device".
-
-                The cu126 repository stops at v1.12.0 (torch 2.10.0+cu126);
-                docling-serve v1.31+ publishes only cu128/cu130.  So this tag
-                is a dead end by design: it is the newest build that can run on
-                these cards at all, and it must not be "updated" to :latest.
-                New docling features arrive here only with newer hardware, or
-                by moving to `gpu = null`.
-            '';
+            description = "Image to be used for the docling container. This has to be modified to account for different CUDA versions or the CPU-only version";
         };
 
         environment = lib.mkOption {
@@ -102,16 +54,16 @@ in {
                 DOCLING_SERVE_ENG_LOC_SHARE_MODELS = "true";
 
                 UVICORN_WORKERS = "1";
-            } // (
-                if cfg.gpu != null then {
+            } 
+            // (if cfg.gpu != null then {
                     DOCLING_DEVICE = "cuda:0";   
                     DOCLING_PERF_PAGE_BATCH_SIZE = "2";
                 } else {
                     DOCLING_DEVICE = "cpu";
                     OMP_NUM_THREADS = "4";
                     MKL_NUM_THREADS = "4";
-                }
-            ) // lib.optionalAttrs (cfg.gpu != null && cfg.memoryFraction != null) {
+                })
+            // lib.optionalAttrs (cfg.gpu != null && cfg.memoryFraction != null) {
                 PYTORCH_CUDA_ALLOC_CONF = "per_process_memory_fraction:${cfg.memoryFraction}";
             } // cfg.environment;
 

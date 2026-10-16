@@ -1,9 +1,12 @@
 {
-    pkgs, config,
+    pkgs, config, lib,
     ...
 }: let
 
     enable_docling = true;
+
+    stt = "deepdml/faster-whisper-large-v3-turbo-ct2";
+    tts = "speaches-ai/Kokoro-82M-v1.0-ONNX";
 
 in {
 
@@ -11,6 +14,17 @@ in {
         enable = enable_docling;
         gpu = "0";
         memoryFraction = "0.24";
+    };
+
+    services.speaches = lib.mkIf stt != null || tts != null {
+        enable = true;
+        gpu = "1";
+
+        port = 8110;
+        ui = false;
+
+        stt-model = stt;
+        tts-model = tts;
     };
 
     services.hermes-agents = {
@@ -21,7 +35,7 @@ in {
         dashboardHost = "0.0.0.0";
         dependencyGroups = [ "messaging" "anthropic" ];
 
-        doclingPdfHook.enable = enable_docling;
+        docling.enable = enable_docling;
 
 
         mcpServers = { };
@@ -32,8 +46,9 @@ in {
                 provider = "openai";
                 language = "";
                 openai = {
-                    base_url = "http://192.168.42.2:8110/v1";
-                    model = "deepdml/faster-whisper-large-v3-turbo-ct2";
+                    api_key = "empty-key";
+                    base_url = "http://localhost:${config.services.speaches.port}/v1";
+                    model = stt;
                     language = "";
                 };
             };
@@ -41,8 +56,8 @@ in {
                 provider = "openai";
                 openai = {
                     api_key = "empty-key";
-                    base_url = "http://192.168.42.2:8110/v1";
-                    model = "speaches-ai/Kokoro-82M-v1.0-ONNX";
+                    base_url = "http://localhost:${config.services.speaches.port}/v1";
+                    model = tts;
                     voice = "af_heart";
                 };
             };
