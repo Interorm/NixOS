@@ -605,7 +605,7 @@ in {
                 type = lib.types.nullOr lib.types.str;
                 default = 
                     if config.services.docling.enable 
-                    then "http://127.0.0.1:${config.services.docling.port}"
+                    then "http://127.0.0.1:${toString config.services.docling.port}"
                     else null;
                 description = "url";
             };
