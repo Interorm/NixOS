@@ -17,7 +17,7 @@
 in {
 
     options.services.firecrawl = {
-        enable = lib.mkEnableOption;
+        enable = lib.mkEnableOption "Enable option; Set via inferring from MCPs";
 
         host = lib.mkOption { type = lib.types.str; default = "0.0.0.0"; };
         port = lib.mkOption { type = lib.types.port; default = 3030; };
