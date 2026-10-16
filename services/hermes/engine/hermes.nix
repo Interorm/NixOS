@@ -647,7 +647,7 @@ in {
             }
             {
                 # Without either, the backend would bind Hermes' default
-                assertion = dashPorts == [] || cfg.dashboardHost != null || cfg.dashboardInterface != null;
+                assertion = dashPorts == [] || cfg.dashboard.host != null || cfg.dashboard.interface != null;
                 message = "services.hermes-agents: an agent has dashboard.enable but neither dashboardHost nor dashboardInterface is set.";
             }
             {
