@@ -4,30 +4,8 @@
     config,
     ...
 }: let
-
-    # Prebuilt images only.  oci-containers pulls, it never builds, so the
-    # upstream compose file's `build:` stanzas are not an option here.
-    #
-    # Pinned to an exact tag, not :latest -- upstream ships several releases a
-    # week and a floating tag would silently change the API contract under the
-    # agents on every container restart.
-    #
-    # NOTE: the published images lag the source tree.  Upstream's self-host
-    # guide pins v2.11.162, but ghcr has nothing above 2.10.19, so the env
-    # contract below is taken from docker-compose.yaml at tag v2.10.19 -- the
-    # revision these images were actually built from -- and not from main.
     version = "2.10.19";
 
-    # Only the API is published, and only on loopback: the MCP server that
-    # consumes it runs on this same host.  Nothing else needs to reach it, and
-    # the stack is deliberately unauthenticated (USE_DB_AUTHENTICATION=false),
-    # so it must not be on a port other machines can dial.
-    #
-    # Exposed as a read-only option so the MCP entry in mcps.nix derives its
-    # FIRECRAWL_API_URL from this one value.  Writing the port in both files
-    # is how they silently drift apart: the container moves, the MCP keeps
-    # dialling the old port, and the agents lose firecrawl with no error at
-    # build time.
     apiPort = config.services.firecrawl.port;
 
     network = "firecrawl_net";
@@ -42,15 +20,11 @@
     postgres = {
         user = "postgres";
         password = "postgres";
-        # Must stay `postgres`: the bundled pg_cron configuration in the
-        # nuq-postgres image targets that database name at initdb time.
         db = "postgres";
     };
 
 in {
 
-    # The port is an option rather than a plain let-binding purely so that
-    # mcps.nix can read it; nothing is expected to set it.
     options.services.firecrawl.port = lib.mkOption {
         type = lib.types.port;
         default = 3030;

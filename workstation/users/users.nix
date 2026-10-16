@@ -22,6 +22,6 @@
     };
 
     home-manager.users = {
-        karl = imports ./karl;
+        karl = import ./karl;
     };
 }

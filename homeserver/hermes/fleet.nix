@@ -16,7 +16,7 @@ in {
         memoryFraction = "0.24";
     };
 
-    services.speaches = lib.mkIf stt != null || tts != null {
+    services.speaches = lib.mkIf ((stt != null) || (tts != null)) {
         enable = true;
         gpu = "1";
 
@@ -32,7 +32,7 @@ in {
 
         defaultModel = "Qwen3.8-27B";
 
-        dashboardHost = "0.0.0.0";
+        dashboard.host = "0.0.0.0";
         dependencyGroups = [ "messaging" "anthropic" ];
 
         docling.enable = enable_docling;
@@ -47,7 +47,7 @@ in {
                 language = "";
                 openai = {
                     api_key = "empty-key";
-                    base_url = "http://localhost:${config.services.speaches.port}/v1";
+                    base_url = "http://localhost:${toString config.services.speaches.port}/v1";
                     model = stt;
                     language = "";
                 };
@@ -56,7 +56,7 @@ in {
                 provider = "openai";
                 openai = {
                     api_key = "empty-key";
-                    base_url = "http://localhost:${config.services.speaches.port}/v1";
+                    base_url = "http://localhost:${toString config.services.speaches.port}/v1";
                     model = tts;
                     voice = "af_heart";
                 };

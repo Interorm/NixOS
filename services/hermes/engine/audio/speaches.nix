@@ -17,7 +17,7 @@
         printf main > $out/${hubFolder repo}/refs/main
     '') [ config.services.speaches.stt-model config.services.speaches.tts-model ]);
 in {
-    imports = [ ../../llama.cpp/huggingface-models.nix ];
+    imports = [ ../../../inference/huggingface-models.nix ];
 
     options.services.speaches = {
         enable = lib.mkEnableOption "Enable Speaches API for Speach-Text conversions";
@@ -77,10 +77,10 @@ in {
                 LOG_LEVEL = "info";
             };
 
-            extraOptions = if cfg.gpu != null then [ "--device=nvidia.com/gpu=${gpu}" ] else [];
+            extraOptions = if cfg.gpu != null then [ "--device=nvidia.com/gpu=${cfg.gpu}" ] else [];
         };
 
-        networking.firewall.allowedTCPPorts = [ toString cfg.port ];
+        networking.firewall.allowedTCPPorts = [ ${toString cfg.port} ];
 
 
         systemd.services.docker-speaches = {

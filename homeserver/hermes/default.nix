@@ -7,5 +7,5 @@
             ./users/joni.nix
             ./users/nana.nix
             ./users/sabine.nix
-        ]
+        ];
 }

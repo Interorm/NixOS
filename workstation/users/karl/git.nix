@@ -3,7 +3,9 @@
 }: {
     programs.git = {
         enable = true;
-        userName = "Interorm";
-        userEmail = "karlhenriklohmann@gmail.com";
+        settings.user = {
+            name = "Interorm";
+            email = "karlhenriklohmann@gmail.com";
+        };
     };
 }

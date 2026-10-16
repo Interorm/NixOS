@@ -2,7 +2,7 @@
     pkgs, config, lib, 
     ... 
 }: let
-    inherit (import ../lib.nix { inherit pkgs config lib; }) mcp profiles;
+    inherit (import ../../../services/hermes/lib.nix { inherit pkgs config lib; }) mcp profiles;
 in {
     services.lean-math = {
         enable = true;

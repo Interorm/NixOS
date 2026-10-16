@@ -10,15 +10,11 @@
         google-auth-oauthlib
         google-api-python-client
     ]);
-    googleLib = import ../../../hermes/google { inherit lib; };
-
-    googleSecret = name:
-        if agent.google.accounts == { } then null
-        else "google-${name}.json"
+    googleLib = import ../google { inherit lib; };
 
     googleFor = name: agent:
         if agent.google.accounts == { } then null
-        else import ../../../hermes/google/wrappers.nix {
+        else import ../google/wrappers.nix {
             inherit pkgs lib googlePython;
             agent = name;
             accounts = agent.google.accounts;
@@ -32,8 +28,8 @@
         name = "hermes-docling-pdf-hook";
         runtimeInputs = with pkgs; [ jq curl coreutils ];
         text = ''
-            export DOCLING_URL=${lib.escapeShellArg cfg.doclingPdfHook.url}
-            export DOCLING_TIMEOUT=${toString cfg.doclingPdfHook.timeout}
+            export DOCLING_URL=${lib.escapeShellArg cfg.docling.url}
+            export DOCLING_TIMEOUT=${toString cfg.docling.timeout}
         '' + builtins.readFile ./docling/docling-pdf-hook.sh;
     };
 
@@ -243,18 +239,18 @@
                 };
             } // lib.optionalAttrs (gapi != null) {
                 skills.external_dirs = [ "${gapi.skillsDir}" ];
-            } // lib.optionalAttrs cfg.doclingPdfHook.enable {
+            } // lib.optionalAttrs cfg.docling.enable {
                 hooks.pre_tool_call = [{
                     matcher = "read_file";
                     command = doclingHookCommand;
-                    timeout = cfg.doclingPdfHook.timeout + 10;
+                    timeout = cfg.docling.timeout + 10;
                     fail_closed = true;
                 }];
             }) cfg.settings) agent.settings;
 
             hermesHomeFiles = lib.optionalAttrs (agent.soul != null) {
                 "SOUL.md" = agent.soul;
-            } // lib.optionalAttrs cfg.doclingPdfHook.enable {
+            } // lib.optionalAttrs cfg.docling.enable {
                 "shell-hooks-allowlist.json" = doclingAllowlist;
             } // mkProfileFiles agent;
 
@@ -648,7 +644,7 @@ in {
             {
                 # The hook fails closed, so pointing it at nothing would turn every PDF read into a blocked tool call.  
                 assertion = !cfg.docling.enable || (cfg.docling.url != null && !lib.hasSuffix "/" cfg.docling.url);
-                message = "services.hermes-agents.doclingPdfHook.url must be non-empty and have no trailing slash.";
+                message = "services.hermes-agents.docling.url must be non-empty and have no trailing slash.";
             }
         ];
 
