@@ -103,6 +103,45 @@ def pick_mechanism(mechs):
     return None, None
 
 
+def select_tan_medium(client, out=None):
+    """Pick and set the TAN medium, returning its name (or None).
+
+    Some Sparkassen run pushTAN without enumerating any TAN medium — the
+    "medium" is the phone app itself, which the bank does not list. For those
+    (Sparkasse Nienburg observed this live on 2026-10-17: HKTAB returned an
+    empty media list while ``is_tan_media_required()`` is True), the sanctioned
+    workaround is to keep "" as the medium — exactly what python-fints' own
+    interactive helper does (fints/utils.py, with a comment naming Sparkasse
+    Heidelberg). The library then sends an empty tan_medium_name in the HKTAN
+    segment (client.py ``_get_tan_segment``), which the bank accepts.
+
+    Returns the medium name for state persistence, or None when the bank
+    offers no medium to choose from.
+    """
+    log = out if out is not None else print
+    if not client.is_tan_media_required():
+        return None
+    log("This mechanism requires naming a TAN medium; fetching…")
+    # get_tan_media() returns (TANUsageOption, [TANMedia4|5, ...]) —
+    # always a 2-tuple in python-fints 5.0.0 (verified).
+    _usage, media_list = client.get_tan_media()
+    media_list = [m for m in (media_list or [])
+                  if getattr(m, "tan_medium_name", None)]
+    if not media_list:
+        log("Bank reported no usable TAN media — continuing without a "
+            "medium (the pushTAN app acts as the medium; the library "
+            "sends an empty tan_medium_name, as it does for other "
+            "pushTAN-only Sparkassen).")
+        return None
+    for m in media_list:
+        log(f"  - {m.tan_medium_name}")
+    medium = media_list[0]
+    medium_name = str(medium.tan_medium_name)
+    log(f"Using TAN medium: {medium_name}")
+    client.set_tan_medium(medium)
+    return medium_name
+
+
 def do_status():
     info = fc.state_info()
     out(f"state file : {info['state_path']}")
@@ -180,23 +219,7 @@ def main(argv):
         out(f"\nSelecting mechanism [{sec}] {_mechanism_name(param)}")
         client.set_tan_mechanism(sec)
 
-        medium_name = None
-        if client.is_tan_media_required():
-            out("This mechanism requires naming a TAN medium; fetching…")
-            # get_tan_media() returns (TANUsageOption, [TANMedia4|5, ...]) —
-            # always a 2-tuple in python-fints 5.0.0 (verified).
-            _usage, media_list = client.get_tan_media()
-            media_list = [m for m in (media_list or [])
-                          if getattr(m, "tan_medium_name", None)]
-            if not media_list:
-                out("ERROR: the bank reported no usable TAN media.")
-                return 1
-            for m in media_list:
-                out(f"  - {m.tan_medium_name}")
-            medium = media_list[0]
-            medium_name = str(medium.tan_medium_name)
-            out(f"Using TAN medium: {medium_name}")
-            client.set_tan_medium(medium)
+        medium_name = select_tan_medium(client, out=out)
 
         with client:
             out("\nTriggering a statement read to force the SCA challenge…")
