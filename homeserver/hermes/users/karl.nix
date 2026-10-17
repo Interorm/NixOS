@@ -2,14 +2,10 @@
     pkgs, config, lib, 
     ... 
 }: let
-    inherit (import ../lib.nix { inherit pkgs config lib; }) mcp profiles;
+    inherit (import ../../../services/hermes/lib.nix { inherit pkgs config lib; }) mcp profiles;
 
-    # The same derivation hermes/mcp/fints.nix runs as the MCP server, so the
-    # server and the enrolment CLI can never come from different sources.
-    # On the agent's PATH for `fints-enroll`: the one-time (and ~180-day)
-    # interactive pushTAN approval, which is a human act and therefore not
-    # something the MCP server can do for itself.
-    fints = import ../mcp/fints/package.nix { inherit pkgs; };
+    # The same derivation hermes/mcp/fints.nix runs as the MCP server, so the server and the enrolment CLI can never come from different sources. On the agent's PATH for `fints-enroll`: the one-time (and ~180-day) interactive pushTAN approval, which is a human act and therefore not something the MCP server can do for itself.
+    fints = import ../../../services/hermes/mcp/fints/package.nix { inherit pkgs; };
 in {
 
     services.lean-math = {
@@ -37,37 +33,9 @@ in {
             ripgrep
         ] ++ [ fints ];
 
-        # Google access, per account, by capability.  Replaces the old
-        # `googleWorkspace.enable = true;` boolean -- which still works (it is a
-        # deprecated alias resolving to exactly this) but cannot express
-        # anything narrower.
-        #
-        # The scope list below is derived from `capabilities` via
-        # hermes/google/capabilities.nix; no scope URL is written here or
-        # anywhere else in the repo.  Declaring an account automatically gives
-        # it a token home (~/.hermes/google/<name>/), a generated command
-        # (`hermes-google-<name>`), an entry in ~/.hermes/google/accounts.json,
-        # and a 0400 decryption of the fleet client secret at
-        # /run/agenix/google-karl.
-        #
-        # One interactive consent per account, once, via `hermes-google-auth
-        # <name>` -- NOT repeated after a rebuild.  Run `hermes-google-status`
-        # as karl to see live token state.
         google.accounts = {
-            # The AGENT's own Google identity (hermes.agent.karl@gmail.com), not
-            # Karl's.  Migrated 1:1 from googleWorkspace.enable: the capability
-            # set below resolves to byte-identically the scopes the vendored
-            # google-workspace skill has always requested, so the EXISTING token
-            # stays valid -- moving ~/.hermes/google_token.json to
-            # ~/.hermes/google/agent/google_token.json is all the migration
-            # needs, with no re-consent.
             agent = {
                 address = "hermes.agent.karl@gmail.com";
-
-                # /!\ mail.full includes gmail.modify + gmail.send, so this
-                # account CAN send and trash mail.  That is intended here and
-                # only here: it is the agent's own mailbox, and the agent
-                # sending as itself is the point.
                 capabilities = [
                     "mail.full"
                     "calendar.rw"
@@ -76,34 +44,38 @@ in {
                     "docs.rw"
                     "contacts.ro"
                 ];
-
-                # This is the project's own account, so the publishing=testing
-                # 7-day refresh-token limit does NOT bite it (that limit applies
-                # to users external to the OAuth app's project).  Recorded as
-                # testing anyway because it is a fact about the Cloud Console,
-                # not a wish.
-                publishing = "testing";
-
                 purpose = ''
-                    The agent's OWN Google account (hermes.agent.karl@gmail.com)
-                    -- an identity belonging to the assistant, not to Karl.
+                    The agent's OWN Google account (hermes.agent.karl@gmail.com) -- an identity belonging to the assistant, not to Karl.
+                    Full access: read, label, trash and SEND mail, plus Calendar, Drive, Sheets, Docs and read-only Contacts.
 
-                    Full access: read, label, trash and SEND mail, plus
-                    Calendar, Drive, Sheets, Docs and read-only Contacts.
-
-                    Mail sent from here is from the assistant and is identifiable
-                    as such.  Never use it to impersonate Karl or to act as his
-                    personal mailbox -- that is a different account, with
-                    deliberately narrower capabilities, and it is listed
-                    separately by `hermes-google-status` when it exists.
+                    Mail sent from here is from the assistant and is identifiable as such.  Never use it to impersonate Karl or to act as his personal mailbox -- that is a different account, with deliberately narrower capabilities, and it is listed separately by `hermes-google-status` when it exists.
                 '';
             };
 
-            # Karl's PERSONAL mailbox is deliberately NOT declared here yet: the
-            # mail tier (read+label+rules, vs adding mail.write which
-            # permanently includes send) and the Testing-vs-Production question
-            # are his calls.  See the PR body's "needs your decision".  Adding
-            # it is a few lines here and nothing else.
+            personal = {
+                address = "karlhenriklohmann@gmail.com";
+                capabilities = [
+                    "mail.read" "mail.labels" "mail.rules"
+                    "calendar.rw" "drive.ro"
+                    "sheets.ro" "docs.ro"
+                ];
+                purpose = ''
+                    Karls personal email. As his personal assistant, treat this as information needed for helping with managing daily life. 
+                    NEVER send or write emails, only help by reading emails for summaries, labelling them for Karl and getting a picture of what is going on in his life that will aid your personal assistant role. 
+                    Again, NEVER use this email for anything other as input.
+                '';
+            };
+
+            network-pluralist-econ = {
+                address = "klohmann@econ4future.org";
+                capabilities = [
+                    "mail.read" "calendar.ro" "drive.ro"
+                ];
+                purpose = ''
+                    Karl is boardmember at the Netzwerk Plurale Ökonomik. This is his work email that receives all important communication and holds access to the organizations documents and calendars.
+                    Like the personal email, this is pure INPUT. NEVER use this email yourself or alter any documents or calendar entries, just use it for retrieving information about what is going on at his work.
+                '';
+            };
         };
         mcpServers = {
             inherit (mcp) github nixos firecrawl context7 deepwiki onedrive fints;

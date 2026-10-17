@@ -74,7 +74,7 @@
         esac
     '';
 in {
-    imports = [ ./huggingface-models.nix ];
+    imports = [ ../huggingface-models.nix ];
 
     services.huggingface-models.models.qwen3-8-27b = {
         repo = "neroued/Qwen3.8-27B-nvfp4-NInfer";

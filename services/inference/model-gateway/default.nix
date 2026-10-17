@@ -1,5 +1,5 @@
 {
     ...
 }: {
-    imports = [ ./model-gateway.nix ]
+    imports = [ ./model-gateway.nix ];
 }

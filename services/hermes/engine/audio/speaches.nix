@@ -2,15 +2,10 @@
     config, lib, pkgs,
     ...
 }: let
-    port = 8110;
+    cfg = config.services.speaches;
 
-    gpu = "1";
-
-    sttModel = "deepdml/faster-whisper-large-v3-turbo-ct2";
-    ttsModel = "speaches-ai/Kokoro-82M-v1.0-ONNX"; #German: "speaches-ai/piper-de_DE-thorsten-medium";
-
-    stt = config.services.huggingface-models.paths.speaches-stt;
-    tts = config.services.huggingface-models.paths.speaches-tts;
+    stt-hfPath = config.services.huggingface-models.paths.speaches-stt;
+    tts-hfPath = config.services.huggingface-models.paths.speaches-tts;
 
     # Speaches resolves a repo id against a HF hub cache
     # ($HF_HUB_CACHE/models--<org>--<name>/{refs/main,snapshots/<ref>/...}),
@@ -20,48 +15,82 @@
     hubSkeleton = pkgs.runCommand "speaches-hf-hub" {} (lib.concatMapStrings (repo: ''
         mkdir -p $out/${hubFolder repo}/refs $out/${hubFolder repo}/snapshots/main
         printf main > $out/${hubFolder repo}/refs/main
-    '') [ sttModel ttsModel ]);
+    '') [ config.services.speaches.stt-model config.services.speaches.tts-model ]);
 in {
-    imports = [ ../../llama.cpp/huggingface-models.nix ];
+    imports = [ ../../../inference/huggingface-models.nix ];
 
-    services.huggingface-models.models = {
-        speaches-stt = { repo = sttModel; target = "faster-whisper-large-v3-turbo-ct2"; };
-        speaches-tts = { repo = ttsModel; target = "Kokoro-82M-v1.0-ONNX"; };
-    };
+    options.services.speaches = {
+        enable = lib.mkEnableOption "Enable Speaches API for Speach-Text conversions";
 
-    virtualisation.oci-containers.containers.speaches = {
-        image = "ghcr.io/speaches-ai/speaches:latest-cuda";
-        ports = [ "${toString port}:8000" ];
-        volumes = [
-            "${hubSkeleton}:${hubDir}:ro"
-            "${stt}:${hubDir}/${hubFolder sttModel}/snapshots/main:ro"
-            "${tts}:${hubDir}/${hubFolder ttsModel}/snapshots/main:ro"
-        ];
-
-        environment = {
-            HF_HUB_CACHE = hubDir;
-            HF_HUB_OFFLINE = "1";
-
-            WHISPER__INFERENCE_DEVICE = "cuda";
-            WHISPER__COMPUTE_TYPE = "int8";
-            WHISPER__TTL = "-1";
-
-            ENABLE_UI = "false";
-            LOG_LEVEL = "info";
+        port = lib.mkOption {
+            type = lib.types.port;
+            default = 8110;
         };
 
-        extraOptions = [ "--device=nvidia.com/gpu=${gpu}" ];
+        ui = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Toggle UI";
+        };
+
+        gpu = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = "1";
+            description = "GPU index. If null, use CPU instead";
+        };
+
+        stt-model = lib.mkOption {
+            type = lib.types.str;
+            description = "HF-repo with the speach-to-text model";
+        };
+
+        tts-model = lib.mkOption {
+            type = lib.types.str;
+            description = "HF-repo with the text-to-speech model";
+        };
     };
 
-    systemd.services.docker-speaches = {
-        wants = [ "hf-model-speaches-stt.service" "hf-model-speaches-tts.service" ];
-        after = [
-            "llama-chat.service"
-            "hf-model-speaches-stt.service"
-            "hf-model-speaches-tts.service"
-        ];
-        unitConfig.ConditionPathExists = [ stt tts ];
-    };
+    config = lib.mkIf cfg.enable {
+        services.huggingface-models.models = {
+            speaches-stt = { repo = cfg.stt-model; target = builtins.baseNameOf cfg.stt-model; };
+            speaches-tts = { repo = cfg.tts-model; target = builtins.baseNameOf cfg.tts-model; };
+        };
 
-    networking.firewall.allowedTCPPorts = [ port ];
+        virtualisation.oci-containers.containers.speaches = {
+            image = "ghcr.io/speaches-ai/speaches:latest-${if cfg.gpu == null then "cpu" else "cuda" }";
+            ports = [ "${toString cfg.port}:8000" ];
+            volumes = [
+                "${hubSkeleton}:${hubDir}:ro"
+                "${stt-hfPath}:${hubDir}/${hubFolder cfg.stt-model}/snapshots/main:ro"
+                "${tts-hfPath}:${hubDir}/${hubFolder cfg.tts-model}/snapshots/main:ro"
+            ];
+
+            environment = {
+                HF_HUB_CACHE = hubDir;
+                HF_HUB_OFFLINE = "1";
+                
+                WHISPER_INFERENCE_DEVICE = "cuda";
+                WHISPER_COMPUTE_TYPE = "int8";
+                WHISPER__TTL = "-1";
+
+                ENABLE_UI = if cfg.ui then "true" else "false";
+                LOG_LEVEL = "info";
+            };
+
+            extraOptions = if cfg.gpu != null then [ "--device=nvidia.com/gpu=${cfg.gpu}" ] else [];
+        };
+
+        networking.firewall.allowedTCPPorts = [ cfg.port ];
+
+
+        systemd.services.docker-speaches = {
+            wants = [ "hf-model-speaches-stt.service" "hf-model-speaches-tts.service" ];
+            after = [
+                "llama-chat.service"
+                "hf-model-speaches-stt.service"
+                "hf-model-speaches-tts.service"
+            ];
+            unitConfig.ConditionPathExists = [ stt-hfPath tts-hfPath ];
+        };
+    };
 }

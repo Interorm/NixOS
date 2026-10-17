@@ -11,7 +11,7 @@
         ../modules/desktop
         ../modules/nvidia
 
-        ./users.nix
+        ./users/users.nix
 
         ../modules/development/vscode.nix
         ../modules/development/remote-desktop.nix

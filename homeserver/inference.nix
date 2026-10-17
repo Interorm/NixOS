@@ -50,7 +50,7 @@
                     file = "qwen2.5-coder-7b-instruct-q4_k_m.gguf";
                 };
 
-                device = 0;
+                device = 1;
                 arguements = {
                     n-gpu-layers = "999";
                     flash-attn = "on";

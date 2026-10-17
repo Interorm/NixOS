@@ -37,7 +37,7 @@
           specialArgs = { inherit inputs; };
 
           modules = [
-            ./hosts/PC/default.nix
+            ./workstation
 
             home-manager.nixosModules.home-manager
             {
@@ -56,7 +56,7 @@
           specialArgs = { inherit inputs; };
 
           modules = [
-            ./hosts/homeserver/default.nix
+            ./homeserver
 
             inputs.agenix.nixosModules.default
 

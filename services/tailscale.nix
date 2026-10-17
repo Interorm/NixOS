@@ -8,12 +8,8 @@
 in {
     environment.systemPackages = [ pkgs.tailscale ];
 
-    # Path is relative to THIS file (modules/services/), so ../../ reaches the
-    # repo root.  One auth key per host: a second machine needs its own
-    # secrets/tailscale-<host>.age plus a rule in secrets/secrets.nix, or its
-    # build fails on the missing file.
     age.secrets.${secretName} = {
-        file = ../../secrets/${secretName}.age;
+        file = ../secrets/${secretName}.age;
         owner = "root";
         mode = "0400";
     };

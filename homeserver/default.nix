@@ -17,11 +17,11 @@
         ../services/tailscale.nix
         
         # Minecraft Servers
-        ../../modules/services/minecraft
+        ../services/minecraft
         
         # Hermes and AI
         ./hermes
-        ./endpoints.nix
+        ./inference.nix
     ];
 
     networking.hostName = "homeserver";
