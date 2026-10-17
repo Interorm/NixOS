@@ -7,13 +7,13 @@
     "mail.write" = [ "https://www.googleapis.com/auth/gmail.modify" ];
     "mail.send" = [ "https://www.googleapis.com/auth/gmail.send" ];
 
+    "mail.modify" = [ "https://www.googleapis.com/auth/gmail.modify" ];
+
     "mail.full" = [
         "https://www.googleapis.com/auth/gmail.readonly"
         "https://www.googleapis.com/auth/gmail.modify"
         "https://www.googleapis.com/auth/gmail.send"
     ];
-
-    # "mail.destroy" = [ "https://mail.google.com/" ];
 
     "calendar.rw" = [ "https://www.googleapis.com/auth/calendar" ];
     "calendar.ro" = [ "https://www.googleapis.com/auth/calendar.readonly" ];
