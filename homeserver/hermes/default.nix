@@ -5,10 +5,6 @@
             ../../services/hermes
 
             ./fleet.nix 
-
-            ./users/karl.nix
-            ./users/joni.nix
-            ./users/nana.nix
-            ./users/sabine.nix
-        ];
+            (lib.map (f: ./users + "/${f}") (lib.attrNames (builtins.readDir ./users)))        
+    ];
 }

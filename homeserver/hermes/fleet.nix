@@ -33,8 +33,9 @@ in {
         defaultModel = "Qwen3.8-27B";
 
         dashboard.host = "0.0.0.0";
-        dependencyGroups = [ "messaging" "anthropic" ];
 
+        dependencyGroups = [ "messaging" "anthropic" ];
+        extraPackages = [ pkgs.chromium ];
         docling.enable = enable_docling;
 
 

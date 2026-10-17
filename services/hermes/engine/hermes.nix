@@ -224,6 +224,7 @@
             extraDependencyGroups = cfg.dependencyGroups;
 
             extraPackages = agent.extraPackages
+                ++ cfg.extraPackages
                 ++ [ pkgs.systemd ]
                 # Add googlePython and all wrappers if enabled
                 ++ lib.optionals (gapi != null) ([ googlePython ] ++ gapi.packages);
@@ -567,6 +568,12 @@ in {
             description = "Hermes pyproject extras compiled into the venv. 'messaging' is Telegram, Discord and Slack. Shared by all agents";
         };
 
+        extraPackages = lib.mkOption {
+            type = lib.types.listOf lib.types.package;
+            default = [];
+            description = "Extra packages to be installed for each agent";
+        };
+
         mcpServers = lib.mkOption {
             type = lib.types.attrsOf lib.types.attrs;
             default = {};
@@ -630,13 +637,17 @@ in {
         dashPorts = map (a: a.dashboard.port) (lib.filter (a: a.dashboard.enable) agentList);
         allPorts = dashPorts ++ apiPorts;
 
-        declaredMcpNames = lib.unique (
+        allMcpEntries = lib.unique (
             lib.concatMap (agent:
-                lib.attrNames agent.mcpServers
-                ++ lib.concatMap (p: lib.attrNames p.mcpServers) (lib.attrValues agent.profiles)
+                lib.attrValues agent.mcpServers
+                ++ lib.concatMap (p: lib.attrValues p.mcpServers) (lib.attrValues agent.profiles)
             ) agentList
-            ++ lib.attrNames cfg.mcpServers
+            ++ lib.attrValues cfg.mcpServers
         );
+
+        requiredServices = lib.unique (lib.flatten (map (e:
+            (e.meta or {}).requires.services or []
+        ) allMcpEntries));
 
     in lib.mkIf cfg.enable {
         assertions = [
@@ -660,7 +671,10 @@ in {
         # Dashboards are LAN-facing by design; the auth gate is the lock.
         networking.firewall.allowedTCPPorts = allPorts;
 
-        services.firecrawl.enable = lib.elem "firecrawl" declaredMcpNames;
+        services = lib.mapAttrs' (_: svc:
+            lib.nameValuePair svc { enable = true; }
+        ) (lib.listToAttrs (map (s: { name = s; value = {}; }) requiredServices));
+
 
         systemd.tmpfiles.rules = [
             "d ${cfg.secretsDir} 0755 root root - -"
