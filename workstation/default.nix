@@ -27,7 +27,7 @@
     
 
     environment.systemPackages = [
-        (import ../../modules/python-envs/env_ML.nix { inherit pkgs; }).base
+        (import ../modules/python-envs/env_ML.nix { inherit pkgs; }).base
     ];
 
     system.stateVersion = "26.05";
