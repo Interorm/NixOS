@@ -11,7 +11,6 @@
         ../modules/nvidia
 
         ./users.nix
-        ./secrets.nix
         ../services/backup.nix
 
         ../services/tailscale.nix
@@ -26,6 +25,11 @@
 
     networking.hostName = "homeserver";
 
+    environment.systemPackages = [
+        inputs.agenix.packages.${pkgs.stdenv.hostPlatform.system}.default
+    ];
+    age.identityPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
+
     hardware.nvidia = {
         package = config.boot.kernelPackages.nvidiaPackages.legacy_580;
         open = false;
@@ -35,7 +39,6 @@
         enable = true;
         passwordFile = config.age.secrets."restic-homeserver".path;
     };
-    
 
     system.stateVersion = "26.05";
 }

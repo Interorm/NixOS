@@ -4,7 +4,7 @@
 }: let
     hostname = config.networking.hostName;
 
-    secretName = "tailscale-${hostname}";
+    secretName = "tailscale";
 in {
     environment.systemPackages = [ pkgs.tailscale ];
 

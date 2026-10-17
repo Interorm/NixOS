@@ -4,6 +4,9 @@
 }: let
     cfg = config.services.homelab-backup;
 
+    hostname = config.networking.hostName;
+    secretName = "restic-${hostname}";
+
     # Crafty's bind-mount root.  Kept in sync with
     # modules/services/minecraft/crafty.nix by hand -- that module hardcodes
     # the same literal, so there is no option to derive it from.
@@ -151,6 +154,15 @@ in {
     };
 
     config = lib.mkIf cfg.enable {
+
+        age.secrets."restic-${hostname}" = {
+            file = ../secrets/restic-homeserver.age;
+            owner = "root";
+            group = "root";
+            mode = "0400";
+        };
+
+
         # mkDefault throughout: if a future `nixos-generate-config` run happens
         # while this disk is mounted, it emits a by-uuid entry for the same
         # mount point.  Without mkDefault that is a "conflicting definitions"

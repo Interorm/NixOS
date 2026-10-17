@@ -15,6 +15,7 @@
 
         ../modules/development/vscode.nix
         ../modules/development/remote-desktop.nix
+        ../services/tailscale.nix
 
         ../modules/apps
         ../modules/gaming
@@ -24,7 +25,10 @@
 
     networking.hostName = "Karls-PC";
 
-    
+    environment.systemPackages = [
+        inputs.agenix.packages.${pkgs.stdenv.hostPlatform.system}.default
+    ];
+    age.identityPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
 
     environment.systemPackages = [
         (import ../modules/python-envs/env_ML.nix { inherit pkgs; }).base
