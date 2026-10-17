@@ -15,6 +15,7 @@ Sections
   6. MCP protocol: initialize / tools/list / every read tool over stdio
   7. MCP failure modes: not-enrolled, missing config, non-SELECT rejection
   8. LIVE (skipped unless FINTS_LIVE=1): real bank fetch after enrollment
+  10. enroll.py select_tan_medium: the Sparkasse pushTAN media quirk (offline stubs)
 
 Section 2 needs the `fints` package (it uses the library's own MT940 parser);
 if it is not importable the section is reported as SKIPPED, not failed, and
@@ -41,6 +42,7 @@ PY = sys.executable or "python3"
 
 sys.path.insert(0, HERE)
 import db                # noqa: E402
+import enroll            # noqa: E402
 import fints_client as fc  # noqa: E402
 
 FAILURES = []
@@ -1093,6 +1095,63 @@ def s9_labeling(tmp):
         c.close()
 
 
+class _FakeMedium:
+    def __init__(self, name):
+        self.tan_medium_name = name
+
+
+class _FakeClient:
+    """Offline stand-in for the FinTS client, recording what enroll.py does."""
+
+    def __init__(self, media_required=True, media=()):
+        self.media_required = media_required
+        self.media = media
+        self.fetched = False
+        self.set_medium = None
+
+    def is_tan_media_required(self):
+        return self.media_required
+
+    def get_tan_media(self):
+        self.fetched = True
+        return (0, self.media)
+
+    def set_tan_medium(self, m):
+        self.set_medium = m
+
+
+def s10_enroll():
+    section("10. enroll.py select_tan_medium (offline: stubbed client)")
+    # No media required -> no bank query at all, no name.
+    c = _FakeClient(media_required=False)
+    name = enroll.select_tan_medium(c)
+    check("no medium required -> returns None", name is None)
+    check("no medium required -> bank HKTAB not queried", not c.fetched)
+
+    # Media required and the bank lists one -> it is selected and named.
+    m = _FakeMedium("S-PushTAN")
+    c = _FakeClient(media_required=True, media=[m])
+    name = enroll.select_tan_medium(c)
+    check("a listed medium is selected", name == "S-PushTAN", f"name={name!r}")
+    check("set_tan_medium() was called with that medium", c.set_medium is m)
+
+    # The live Nienburg shape: media required but the bank lists NONE —
+    # pushTAN's "medium" is the phone app. Must NOT abort; the library keeps
+    # "" as the medium. (Observed 2026-10-17; same quirk as Sparkasse
+    # Heidelberg per python-fints' own utils.py workaround.)
+    c = _FakeClient(media_required=True, media=[])
+    name = enroll.select_tan_medium(c)
+    check("empty media list does NOT abort enrollment (Nienburg pushTAN)",
+          name is None, f"name={name!r}")
+    check("empty media list -> no medium set (library sends empty name)",
+          c.set_medium is None)
+
+    # Media present but all without a name are filtered out, same as empty.
+    c = _FakeClient(media_required=True, media=[_FakeMedium(None)])
+    name = enroll.select_tan_medium(c)
+    check("unnamed media are treated like an empty list", name is None)
+
+
 def main():
     print(f"harness: {os.path.basename(__file__)}")
     print(f"server : {SERVER}")
@@ -1122,6 +1181,7 @@ def main():
             print(f"\nserver stderr: {tail}")
         s7_failure_modes(tmp)
         s9_labeling(tmp)
+        s10_enroll()
         s8_live()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
