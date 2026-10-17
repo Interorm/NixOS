@@ -29,7 +29,10 @@
 
     environment.systemPackages = [
         inputs.agenix.packages.${pkgs.stdenv.hostPlatform.system}.default
+
         (import ../modules/python-envs/env_ML.nix { inherit pkgs; }).base
+
+        pkgs.efibootmgr
     ];
 
     system.stateVersion = "26.05";
