@@ -38,7 +38,7 @@ in {
                     The agent's OWN Google account (hermes.agent.karl@gmail.com) -- an identity belonging to the assistant, not to Sabine.
                     Full access: read, label, trash and SEND mail, plus Calendar, Drive, Sheets, Docs and read-only Contacts.
                     Sabine has all her work email forwarded to this account, so use this account as an input when you need any work-related information.
-                ''
+                '';
             };
         };
 
