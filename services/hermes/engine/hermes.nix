@@ -85,12 +85,6 @@
     };
 
 
-    # `meta` is this module's OWN bookkeeping (description, requires.*): it is
-    # consumed here to derive requiredServices and never belongs in the config
-    # handed to the upstream home-manager module, whose mcpServers submodule
-    # declares no such option and errors on it.  The profile path strips it by
-    # whitelisting keys (mkProfileMcpServerEntry); the agent path needs this.
-    # removeAttrs rather than a whitelist so future upstream keys pass through.
     stripMcpMeta = lib.mapAttrs (_: srv: removeAttrs srv [ "meta" ]);
 
     # This essentially just pulls all data from the MCP
@@ -657,21 +651,6 @@ in {
             (e.meta or {}).requires.services or []
         ) allMcpEntries));
 
-        # The UNIVERSE of services an MCP snippet could ever ask us to enable,
-        # read straight off the snippet registry instead of off cfg.agents.
-        #
-        # WHY: the attribute NAMES of the `services = ...` definition below are
-        # forced by the module system whenever anything evaluates any
-        # `config.services.*` option.  If those names come from
-        # `requiredServices` -> `cfg.agents` -> `config.services.hermes-agents`,
-        # then reading any service option re-enters the merge of `services`
-        # itself: infinite recursion (nixpkgs lib/modules.nix:879).  The
-        # registry is pure data -- readDir plus each snippet's lazy `meta` --
-        # so forcing these names never touches `config`.
-        #
-        # Filtered by `options.services ? <name>` (an options read, also
-        # config-free) so a snippet naming a service this host does not define
-        # is skipped rather than producing an "option does not exist" error.
         candidateServices = lib.filter (s: options.services ? ${s}) (lib.unique (lib.flatten (
             map (e: (e.meta or {}).requires.services or [])
                 (lib.attrValues (import ../lib.nix { inherit pkgs config lib; }).mcp)
@@ -699,10 +678,6 @@ in {
         # Dashboards are LAN-facing by design; the auth gate is the lock.
         networking.firewall.allowedTCPPorts = allPorts;
 
-        # Attribute NAMES here must be config-free (see candidateServices):
-        # the registry gives the static universe, and membership in
-        # `requiredServices` -- which does read cfg.agents -- is deferred into
-        # the VALUE via mkIf, where laziness makes it harmless.
         services =
             (lib.genAttrs candidateServices (s: {
                 enable = lib.mkIf (lib.elem s requiredServices) true;

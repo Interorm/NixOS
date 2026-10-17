@@ -35,7 +35,7 @@ in {
         dashboard.host = "0.0.0.0";
 
         dependencyGroups = [ "messaging" "anthropic" ];
-        extraPackages = [ pkgs.chromium ];
+        extraPackages = [ pkgs.chromium pkgs.agent-browser ];
         docling.enable = enable_docling;
 
 
