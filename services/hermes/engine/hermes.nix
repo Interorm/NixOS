@@ -671,9 +671,23 @@ in {
         # Dashboards are LAN-facing by design; the auth gate is the lock.
         networking.firewall.allowedTCPPorts = allPorts;
 
-        services = lib.mapAttrs' (_: svc:
-            lib.nameValuePair svc { enable = true; }
-        ) (lib.listToAttrs (map (s: { name = s; value = {}; }) requiredServices));
+        services =
+            (lib.mapAttrs' (name: _:
+                lib.nameValuePair name { enable = true; }
+            ) (lib.listToAttrs (map (s: { name = s; value = {}; }) requiredServices)))
+            //
+            (lib.optionalAttrs (options.services ? model-gateway) {
+                model-gateway = {
+                    endpoints = lib.mapAttrs' (name: agent:
+                        lib.nameValuePair "hermes-${name}" {
+                            url = "http://127.0.0.1:${toString agent.apiServerPort}";
+                            discovery = "probe";
+                            priority = 50;
+                        }
+                    ) (lib.filterAttrs (_: a: a.apiServerPort != null) cfg.agents);
+                };
+            });
+
 
 
         systemd.tmpfiles.rules = [
