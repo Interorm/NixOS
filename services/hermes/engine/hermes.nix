@@ -708,19 +708,7 @@ in {
             linger = true;
         }) cfg.agents;
 
-        home-manager.users = lib.mapAttrs mkHome cfg.agents;
-
-        # Auto-register each agent's API server as a model-gateway endpoint.
-        services.model-gateway.endpoints = lib.mkIf (options.services ? model-gateway) (
-            lib.mapAttrs' (name: agent:
-                lib.nameValuePair "hermes-${name}" {
-                    url = "http://127.0.0.1:${toString agent.apiServerPort}";
-                    discovery = "probe";
-                    priority = 50;
-                }
-            ) (lib.filterAttrs (_: a: a.apiServerPort != null) cfg.agents)
-        );
-        
+        home-manager.users = lib.mapAttrs mkHome cfg.agents;        
         
         age.secrets = (
             (lib.mapAttrs' (name: _: lib.nameValuePair "hermes-${name}" {
