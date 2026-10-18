@@ -190,7 +190,7 @@ in {
 
                     ExecStart = lib.escapeShellArgs (
                         [ "${ninfer}/bin/ninfer-serve" ]
-                        ++ [ "--model" config.services.huggingface-models.paths.${name} ]
+                        ++ [ config.services.huggingface-models.paths.${name} ]
                         ++ [ "--model-id" name ]
                         ++ [ "--host" m.host "--port" (toString m.port) ]
                         ++ (argPairs m.arguements)
