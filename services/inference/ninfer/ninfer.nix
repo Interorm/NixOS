@@ -19,7 +19,7 @@
         else if lib.length (lib.attrNames cfg.instances) == 1
         then lib.head (lib.attrNames cfg.instances)
         else null;
-        
+
 
     cudaPackages = pkgs.cudaPackages_13_2;
     ninfer = pkgs.stdenv.mkDerivation (finalAttrs: {
@@ -191,6 +191,7 @@ in {
                     ExecStart = lib.escapeShellArgs (
                         [ "${ninfer}/bin/ninfer-serve" ]
                         ++ [ "--model" config.services.huggingface-models.paths.${name} ]
+                        ++ [ "--model-id" name ]
                         ++ [ "--host" m.host "--port" (toString m.port) ]
                         ++ (argPairs m.arguements)
                     );
