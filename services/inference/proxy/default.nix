@@ -76,7 +76,7 @@ in {
         };
     };
 
-    config = lib.mkIf (cfg.enable && cfg.remote) {
+    config = lib.mkIf (cfg.enable && cfg.remotes) {
 
         assertions = [ 
             { assertion = cfg.port.min + (lib.length remoteNames) - 1 <= cfg.port.max;
