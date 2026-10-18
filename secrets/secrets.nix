@@ -11,7 +11,7 @@ let
   dummyArgs = { pkgs = null; config = null; lib = null; };
 
   homeserver = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHqEd/Iew4ztsH+j5G1gsL9332sccR/5Aiq8Wl3AUpt9 root@nixos";
-  workstation = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGklMfPSM6jJ7F6dyyG5Au7tBliFX0EkHfVMWPA461Fz root@nixos"
+  workstation = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGklMfPSM6jJ7F6dyyG5Au7tBliFX0EkHfVMWPA461Fz root@nixos";
   admin = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMH2S3ZA0agXgsNM8RWJ1JvJrfe2Bq00Zc2mQwmjhAjX karli@Karls-Surface";
 
   agentRules = builtins.mapAttrs (name: agent:
