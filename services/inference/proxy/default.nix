@@ -126,8 +126,8 @@ in {
                     Restart = "always";
                     RestartSec = "5";
                     
-                    User = "llama-proxy";
-                    StateDirectory = "llama-proxy";   
+                    # User = "llama-proxy";
+                    # StateDirectory = "llama-proxy";   
                 };
             }
         ) cfg.remotes;
@@ -137,12 +137,12 @@ in {
             (lib.attrValues portFor);
 
 
-        users.users.llama-proxy = { 
-            isSystemUser = true; 
-            group = "llama-proxy"; 
-            home = "/var/lib/llama-proxy"; 
-        }; 
-        users.groups.llama-proxy = {};
+        # users.users.llama-proxy = { 
+        #     isSystemUser = true; 
+        #     group = "llama-proxy"; 
+        #     home = "/var/lib/llama-proxy"; 
+        # }; 
+        # users.groups.llama-proxy = {};
 
         services = lib.mkIf cfg.model-gateway {
             model-gateway.endpoints = lib.mapAttrs (name: m: {
