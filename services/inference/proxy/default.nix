@@ -40,7 +40,7 @@ in {
         };
         host = lib.mkOption { type = lib.types.str; default = "127.0.0.1"; };
 
-        model-gateway = lib.mkOption {
+        modelGateway = lib.mkOption {
             type = lib.types.bool;
             default = config.services.model-gateway.enable or false;
             description = "Automatically add inference backends to model-gateway";
@@ -144,7 +144,7 @@ in {
         # }; 
         # users.groups.llama-proxy = {};
 
-        services = lib.mkIf cfg.model-gateway {
+        services = lib.mkIf cfg.modelGateway {
             model-gateway.endpoints = lib.mapAttrs (name: m: {
                 url = "http://localhost:${toString portFor.${name}}";
                 discovery = if m.powerManager.enable then "static" else "probe";

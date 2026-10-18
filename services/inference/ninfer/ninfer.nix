@@ -2,6 +2,18 @@
     pkgs, config, lib,
     ...
 }: let
+    cfg = config.services.ninfer;
+
+    argPairs = attrs: lib.concatLists (lib.mapAttrsToList (name: value:
+        if value == true then [ "--${name}" ]
+        else if value == false then [ "--no-${name}" ]
+        else if lib.isList value then lib.concatMap (v: [ "--${name}" (toString v) ]) value
+        else [ "--${name}" (toString value) ]
+    ) attrs);
+
+    unitName = name: "ninfer-${lib.replaceStrings ["/" " "] ["-" "-"] name}";
+
+
     cudaPackages = pkgs.cudaPackages_13_2;
 
     ninfer = pkgs.stdenv.mkDerivation (finalAttrs: {
@@ -36,7 +48,7 @@
 
         cmakeFlags = [
             "-DCMAKE_BUILD_TYPE=Release"
-            "-DCMAKE_CUDA_ARCHITECTURES=120a"
+            "-DCMAKE_CUDA_ARCHITECTURES=${cfg.cuda_architecture}"
         ];
 
         # Upstream ships no `install` target, so the generic installPhase would
@@ -56,7 +68,6 @@
         };
     });
 
-    model = config.services.huggingface-models.paths.qwen3-8-27b;
 
     # Remote control surface for the homeserver's llama-proxy.  The proxy SSHes
     # in and runs `sudo ninferctl <verb>`; everything it is allowed to do is
@@ -64,91 +75,130 @@
     # one binary instead of blanket root.
     ninferctl = pkgs.writeShellScriptBin "ninferctl" ''
         set -euo pipefail
-        case "''${1:-}" in
-            start)    exec systemctl start    ninfer-serve.service ;;
-            stop)     exec systemctl stop     ninfer-serve.service ;;
-            restart)  exec systemctl restart  ninfer-serve.service ;;
-            status)   exec systemctl is-active ninfer-serve.service ;;
+
+        # Generated from services.ninfer.instances — the only units this tool may touch.
+        declare -A units=(
+            ${lib.concatStringsSep "\n        " (lib.mapAttrsToList
+                (name: _: ''[${lib.escapeShellArg name}]=${lib.escapeShellArg "${unitName name}.service"}'')
+                cfg.instances)}
+        )
+        default_instance=${lib.escapeShellArg (lib.head (lib.attrNames cfg.instances))}
+
+        verb="''${1:-}"; inst="''${2:-$default_instance}"
+
+        usage() {
+            echo "usage: ninferctl {start|stop|restart|status} [instance]" >&2
+            echo "       ninferctl {list|poweroff}" >&2
+            echo "instances: ''${!units[*]}" >&2
+            exit 2
+        }
+
+        case "$verb" in
+            list)     printf '%s\n' "''${!units[@]}"; exit 0 ;;
             poweroff) exec systemctl poweroff ;;
-            *) echo "usage: ninferctl {start|stop|restart|status|poweroff}" >&2; exit 2 ;;
+            start|stop|restart|status) ;;
+            *) usage ;;
+        esac
+
+        unit="''${units[$inst]:-}"
+        [ -n "$unit" ] || { echo "ninferctl: unknown instance '$inst'" >&2; usage; }
+
+        case "$verb" in
+            status) exec systemctl is-active "$unit" ;;
+            *)      exec systemctl "$verb" "$unit" ;;
         esac
     '';
 in {
     imports = [ ../huggingface-models.nix ];
 
-    services.huggingface-models.models.qwen3-8-27b = {
-        repo = "neroued/Qwen3.8-27B-nvfp4-NInfer";
-        file = "qwen3_8_27b_nvfp4.ninfer";
-        target = "Qwen3.8-27B-nvfp4.ninfer";
-    };
+    options.services.ninfer = {
+        enable = lib.mkEnableOption "Enable NInfer inference server";
 
-    environment.systemPackages = [ ninfer ninferctl ];
+        cuda_architecture = lib.mkOption {
+            type = lib.types.str; 
+            default = "120a";
+            description = "Set the cuda architecture to get the correct NInfer version";
+        };
 
-    systemd.services.ninfer-serve = {
-        description = "NInfer inference server (Qwen3.8-27B, nvfp4)";
+        modelGateway = lib.mkOption {
+            type = lib.types.bool;
+            default = config.services.model-gateway.enable or false;
+            description = "Automatically add all models from llama-cpp to model-gateway";
+        };
 
-        # Deliberately NOT `wantedBy = [ "multi-user.target" ]`.  The whole point
-        # of the proxy is that this box sleeps until someone actually asks for a
-        # token; autostarting would pin ~30 GB of VRAM and the GPU's idle draw
-        # around the clock.  The proxy starts it over SSH.
-        after = [ "network.target" "hf-model-qwen3-8-27b.service" ];
-        wants = [ "hf-model-qwen3-8-27b.service" ];
+        instances = lib.mkOption {
+            default = {};
+            description = "List of all models provided by llama-cpp";
+            type = lib.types.attrsOf (lib.types.submodule ({name, ...}: {
+                options = {
+                    host = lib.mkOption { type = lib.types.str; default = "127.0.0.1"; };
 
-        unitConfig.ConditionPathExists = model;
+                    port = lib.mkOption { type = lib.types.port; };
 
-        serviceConfig = {
-            Type = "simple";
 
-            ExecStart = lib.escapeShellArgs [
-                "${ninfer}/bin/ninfer-serve"
-                model
-                "--model-id" "Qwen3.8-27B"
+                    model = {
+                        repo = lib.mkOption { type = lib.types.str; };
+                        file = lib.mkOption { type = lib.types.str; };
+                    };
 
-                "--host" "0.0.0.0"
-                "--port" "8080"
+                    device = lib.mkOption { type = lib.types.nullOr lib.types.int; default = null; };
 
-                "--max-context" "240000"
-                "--kv-capacity" "auto"
-                "--kv-dtype" "nvfp4"
-                "--no-cuda-graph"
-
-                "--max-concurrency" "2"
-
-                "--device-state-slots" "2"
-                "--host-state-slots" "8"
-                "--host-kv-mib" "16384"
-
-                "--spec" "mtp"
-                "--draft-tokens" "3"
-                "--lm-head-draft"
-
-                "--preserve-thinking"
-
-                "--vision"
-            ];
-
-            TimeoutStartSec = "600";
-
-            Restart = "on-failure";
-            RestartSec = "10";
+                    arguements = lib.mkOption {
+                        default = {};
+                        type = lib.types.attrsOf (lib.types.oneOf [
+                            lib.types.str
+                            lib.types.int
+                            lib.types.bool
+                            (lib.types.listOf lib.types.str)
+                        ]);
+                        description = "Arguements used to serve the model";
+                    };
+                };
+            }));
         };
     };
 
-    networking.firewall.allowedTCPPorts = [ 8080 ];
-    networking.interfaces."enp6s0".wakeOnLan.enable = true;
 
-    security.sudo.extraRules = [{
-        users = [ "karl" ];
-        commands = [{
-            command = "/run/current-system/sw/bin/ninferctl";
-            options = [ "NOPASSWD" ];
+    config = lib.mkIf (cfg.enable && cfg.instances != {}) {
+        environment.systemPackages = [ ninfer ninferctl ];
+
+        services.huggingface-models.models = lib.mkMerge (lib.mapAttrsToList (name: m:
+            { ${name} = { repo = m.model.repo; file = m.model.file; target = "${name}.ninfer"; }; }
+        ) cfg.instances);
+
+        systemd.services = lib.mapAttrs' (name: m:
+            lib.nameValuePair (unitName) {
+                description = "NInfer inference server for model ${name}";
+
+                after = [ "network.target" "hf-model-${name}.service" ];
+                wants = [ "hf-model-${name}.service" ];
+
+                unitConfig.ConditionPathExists = config.services.huggingface-models.paths.${name};
+
+                serviceConfig = {
+                    Type = "simple";
+
+                    Environment = lib.optional (m.device != null) "CUDA_VISIBLE_DEVICES=${toString m.device}";
+                    
+                    ExecStart = lib.escapeShellArgs (
+                        [ "${ninfer}/bin/ninfer-serve" ]
+                        ++ [ "--model" config.services.huggingface-models.paths.${name} ]
+                        ++ [ "--host" m.host "--port" (toString m.port) ]
+                        ++ (argPairs m.arguements)
+                    );
+                };
+        }) cfg.instances;
+
+        networking.firewall.allowedTCPPorts = lib.mapAttrsToList (_: m: m.port)
+            (lib.filterAttrs (_: m: !lib.elem m.host [ "127.0.0.1" "::1" "localhost" ]) cfg.instances);
+
+
+        security.sudo.extraRules = [{
+            users = [ "ALL" ];
+            commands = [{
+                command = "/run/current-system/sw/bin/ninferctl";
+                options = [ "NOPASSWD" ];
+            }];
         }];
-    }];
-
-    services.openssh = {
-        enable = true;
     };
-    users.users."karl".openssh.authorizedKeys.keys = [
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPootR7FogHsp0OdnDu6kjPj2rqHribx0OnFvzyfnYGY root@homeserver"
-    ];
 }

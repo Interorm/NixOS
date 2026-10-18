@@ -117,7 +117,8 @@ in {
             };
         }) cfg.instances;
 
-        networking.firewall.allowedTCPPorts = map (m: m.port) (lib.attrValues cfg.instances);
+        networking.firewall.allowedTCPPorts = lib.mapAttrsToList (_: m: m.port)
+            (lib.filterAttrs (_: m: !lib.elem m.host [ "127.0.0.1" "::1" "localhost" ]) cfg.instances);
 
         services.model-gateway.endpoints = lib.mkMerge (lib.mapAttrsToList (name: m: {
             ${name} = { url = "http://${m.host}:${toString m.port}"; };
