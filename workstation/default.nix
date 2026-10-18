@@ -20,7 +20,7 @@
         ../modules/apps
         ../modules/gaming
 
-        ../services/inference/ninfer
+        ./inference.nix
     ];
 
     networking.hostName = "Karls-PC";
