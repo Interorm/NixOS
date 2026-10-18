@@ -33,6 +33,11 @@
         (import ../modules/python-envs/env_ML.nix { inherit pkgs; }).base
 
         pkgs.efibootmgr
+        (pkgs.writeShellScriptBin "boot-windows" ''
+            set -euo pipefail
+            sudo efibootmgr --bootnext 0000
+            sudo reboot
+        '')
     ];
 
     system.stateVersion = "26.05";

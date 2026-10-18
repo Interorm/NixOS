@@ -69,6 +69,28 @@
     };
 
 
+    services.llama-proxy = {
+        enable = true;
+
+        port.min = 8090;
+        host = "127.0.0.1";
+
+        remotes = {
+            workstation = {
+                mac = "A0:AD:9F:B1:E5:DB";
+                ip = "192.168.42.42";
+                user = "karl";
+
+                engine.port = 8080;
+                models = [ "Qwen3.8-27B" ];
+
+                powerManager.enable = true;
+                dndFlag = true;
+            };
+        };
+    };
+
+
     services.model-gateway = {
         enable = true;
 
