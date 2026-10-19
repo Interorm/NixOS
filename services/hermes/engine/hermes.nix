@@ -228,6 +228,13 @@
 
         programs.bash.enable = true;
 
+        programs.obsidian = if agent.obsidian.enable then {
+            enable = true;
+            vaults.notes.target = agent.obsidian.vault;
+            defaultSettings.app = agent.obsidian.settings;
+            defaultSettings.corePlugins = agent.obsidian.plugins;
+        } else { enable = false; };
+
         programs.hermes-agent.enable = true;
         services.hermes-agent = {
             enable = true;
@@ -243,6 +250,8 @@
                 API_SERVER_MODEL_NAME = "hermes-${name}";
             } // lib.optionalAttrs agent.dashboard.enable {
                 HERMES_DASHBOARD_BASIC_AUTH_USERNAME = name;
+            } // lib.optionalAttrs agent.obsidian.enable {
+                OBSIDIAN_VAULT_PATH = "/home/${name}/${agent.obsidian.vault}";
             };
 
             extraDependencyGroups = cfg.dependencyGroups;
@@ -519,6 +528,31 @@
                 type = lib.types.listOf lib.types.str;
                 default = [ ];
                 description = "Curated skills from services/hermes/skills/, added via settings.skills.external_dirs.";
+            };
+
+            obsidian = {
+                enable = lib.mkOption { type = lib.types.bool; default = false; };
+                vault = lib.mkOption {
+                    type = lib.types.str;
+                    default = ".hermes-obsidian";
+                    readOnly = true;
+                };
+
+                settings = lib.mkOption {
+                    type = lib.types.attrsOf (lib.types.oneOf [
+                        lib.types.str
+                        lib.types.int
+                        lib.types.bool
+                        (lib.types.listOf lib.types.str)
+                    ]);
+                    default = {};
+                };
+
+                plugins = lib.mkOption {
+                    type = lib.typs.listOf lib.types.str;
+                    default = [];
+                    description = "List of named obsidian extensions avaible to NixOS";
+                };
             };
 
             profiles = lib.mkOption {
