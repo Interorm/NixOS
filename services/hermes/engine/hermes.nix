@@ -232,7 +232,7 @@
             enable = true;
             vaults.notes.target = agent.obsidian.vault;
             defaultSettings.app = agent.obsidian.settings;
-            defaultSettings.corePlugins = agent.obsidian.plugins;
+            defaultSettings.corePlugins = agent.obsidian.corePlugins;
         } else { enable = false; };
 
         programs.hermes-agent.enable = true;
@@ -548,8 +548,8 @@
                     default = {};
                 };
 
-                plugins = lib.mkOption {
-                    type = lib.typs.listOf lib.types.str;
+                corePlugins = lib.mkOption {
+                    type = lib.types.listOf lib.types.str;
                     default = [];
                     description = "List of named obsidian extensions avaible to NixOS";
                 };
