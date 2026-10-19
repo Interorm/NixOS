@@ -8,7 +8,7 @@
         direnv
         pciutils
         (btop.override {cudaSupport = true;})
-        yazi
+        yazi gdu
         tmux
     ];
 }
