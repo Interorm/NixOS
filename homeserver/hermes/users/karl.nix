@@ -96,6 +96,13 @@ in {
             kanban.orchestrator_profile = "orchestrator";
         };
 
+        obsidian = {
+            enable = true;
+            settings = {
+                alwaysUpdateLinks = true;
+            };
+        };
+
         profiles = {
             inherit (profiles) orchestrator coder nixos hr researcher;
         };
