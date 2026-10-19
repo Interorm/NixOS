@@ -63,35 +63,45 @@ let
             (import (./profiles + "/${name}") { inherit pkgs config lib mcp; })
     ) (lib.filterAttrs isSnippet entries);
 
-    # Repo-shipped skills: one subdirectory per skill under ./skills/, each
-    # holding a SKILL.md (plus optional references/, scripts/, ...).  Discovered
-    # with readDir exactly like ./mcp, so adding hermes/skills/foo/SKILL.md makes
-    # `skills.foo` exist with no registration step.
-    #
-    # Each value is a STORE PATH containing that one skill, shaped
-    # `<store-path>/<name>/SKILL.md` -- the layout Hermes' external-skills walker
-    # expects (it rglobs for SKILL.md, so the skill's own directory level must be
-    # present).  Consumed via `settings.skills.external_dirs`, which is the
-    # sanctioned read-only hatch: modules/services/hermes/hermes.nix deliberately
-    # does NOT manage ~/.hermes/skills/ so that a rebuild cannot wipe hand- or
-    # agent-authored skills.  Never copy one of these into that tree.
-    #
-    # LAZINESS, same as mcp/profiles: this is a `let` binding inside the
-    # registry, and `pkgs` is only forced when a caller actually reads a skill
-    # path.  secrets/secrets.nix plain-imports hermes/users/*.nix with
-    # `pkgs = null` and must keep working, so nothing on that path may force
-    # this -- do not turn it into a module argument and do not make any user
-    # file force it unconditionally.
-    skills = let
-        entries = builtins.readDir ./skills;
-        isSkill = name: type:
-            type == "directory" && builtins.pathExists (./skills + "/${name}/SKILL.md");
-    in lib.mapAttrs (name: _:
-        pkgs.runCommand "hermes-skill-${name}" { } ''
-            mkdir -p "$out"
-            cp -r ${./skills + "/${name}"} "$out/${name}"
-        ''
-    ) (lib.filterAttrs isSkill entries);
+
+    skillsRoot = ./skills;
+    entriesOf = dir:
+        lib.mapAttrsToList (name: type: { inherit name type; }) (builtins.readDir dir);
+
+    # A dir with its own SKILL.md IS a skill (not descended into).
+    # A dir without one is a grouping: recurse, to depth 2.
+    findSkillDirs = dir: depth:
+        if depth > 2 then { }
+        else lib.foldl' (acc: entry:
+            let p = dir + "/${entry.name}";
+            in if entry.type != "directory" then acc
+               else if builtins.pathExists (p + "/SKILL.md") then acc // { ${entry.name} = p; }
+               else acc // (findSkillDirs p (depth + 1))
+        ) { } (entriesOf dir);
+
+    found = findSkillDirs skillsRoot 1;
+
+    mkDeriv = name: path: pkgs.runCommand "hermes-skill-${name}" { } ''
+        mkdir -p "$out"
+        cp -r ${path} "$out/${name}"
+    '';
+
+    skills = lib.mapAttrs mkDeriv found;
+
+    # Packs reuse `skills` -> each skill is built exactly once.
+    packMembers = pkg:
+        lib.filter (n: lib.hasPrefix "${toString skillsRoot}/${pkg}/" (toString found.${n}))
+            (lib.attrNames found);
+
+    topDirs = lib.attrNames (lib.filterAttrs
+        (n: t: t == "directory" && !(builtins.pathExists (skillsRoot + "/${n}/SKILL.md")))
+        (builtins.readDir skillsRoot));
+
+    skillPacks = lib.listToAttrs (lib.concatMap (pkg:
+        let members = packMembers pkg;
+        in lib.optional (members != [ ]) (lib.nameValuePair pkg (map (n: skills.${n}) members))
+    ) topDirs);
+
 in {
-    inherit mcp profiles skills;
+    inherit mcp profiles skills skillPacks;
 }

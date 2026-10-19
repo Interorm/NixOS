@@ -23,6 +23,16 @@
         };
 
 
+    skillsReg = import ../lib.nix { inherit pkgs config lib; };
+
+    skillEntry = name:
+        if skillsReg.skills ? ${name} then [ skillsReg.skills.${name} ]
+        else if skillsReg.skillPacks ? ${name} then skillsReg.skillPacks.${name}
+        else throw "hermes-agents: unknown skill or pack '${name}' (skills: ${lib.concatStringsSep ", " (lib.attrNames skillsReg.skills)}; packs: ${lib.concatStringsSep ", " (lib.attrNames skillsReg.skillPacks)})";
+
+    skillDirs = names: lib.unique (map toString (lib.concatMap skillEntry names));
+
+
     # The PDF -> docling hook, with its URL and timeout baked in. 
     doclingHook = pkgs.writeShellApplication {
         name = "hermes-docling-pdf-hook";
@@ -98,6 +108,7 @@
     # One profile's config.yaml
     mkProfileConfig = agent: pname: p: let
         mergedMcp = cfg.mcpServers // p.mcpServers;
+        profileSkillDirs = skillDirs (agent.skills ++ p.skills);
     in builtins.toJSON (lib.recursiveUpdate (lib.recursiveUpdate ({
         model = {
             provider = "custom";
@@ -107,6 +118,8 @@
         };
         toolsets = p.toolsets;
         mcp_servers = lib.mapAttrs (_: mkProfileMcpServerEntry) mergedMcp;
+    } // lib.optionalAttrs (profileSkillDirs != [ ]) {
+        skills.external_dirs = profileSkillDirs;
     }) cfg.settings) p.settings);
 
     mkProfileFiles = agent: lib.foldl' (acc: pname: let
@@ -190,6 +203,12 @@
                 default = {};
                 description = "Full set of all MCP servers avaible to the model";
             };
+
+            skills = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Curated skills from services/hermes/skills/, added via settings.skills.external_dirs.";
+            };
         };
     });
 
@@ -197,6 +216,9 @@
     # Create home for one agent
     mkHome = name: agent: { lib, pkgs, ... }: let
         gapi = googleFor name agent;
+        googleDirs = lib.optional (gapi != null) "${gapi.skillsDir}";
+        curated = skillDirs agent.skills;
+        allSkillDirs = googleDirs ++ curated;
     in {
         imports = [ inputs.hermes-agent.homeManagerModules.default ];
 
@@ -240,8 +262,8 @@
                     default = agent.model;
                     api_key = "\${OPENAI_API_KEY}";
                 };
-            } // lib.optionalAttrs (gapi != null) {
-                skills.external_dirs = [ "${gapi.skillsDir}" ];
+            } // {
+                skills.external_dirs = allSkillDirs;
             } // lib.optionalAttrs cfg.docling.enable {
                 hooks.pre_tool_call = [{
                     matcher = "read_file";
@@ -491,6 +513,12 @@
                 type = lib.types.attrsOf lib.types.attrs;
                 default = {};
                 description = "Store MCP servers to be added alongside fleet-wide MCPs. Secrets should go in env-file (agenix)";
+            };
+
+            skills = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Curated skills from services/hermes/skills/, added via settings.skills.external_dirs.";
             };
 
             profiles = lib.mkOption {
