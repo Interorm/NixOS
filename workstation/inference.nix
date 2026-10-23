@@ -1,7 +1,10 @@
 {
     config, lib, ...
 }: {
-    imports = [ ../services/inference/ninfer ];
+    imports = [ 
+        ../services/inference/ninfer 
+        ../services/inference/strata
+    ];
 
     services.ninfer = {
         enable = true;
@@ -33,6 +36,39 @@
                     vision = true;
                 };
             }; 
+        };
+    };
+
+    services.strata = {
+        enable = true;
+
+        cuda_architecture = "120";
+
+        instances = {
+            "Qwen3.8-Flash-Next" = {
+                host = "0.0.0.0";
+                port = 8080;
+                isDefault = true;
+
+                model = {
+                    repo = "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF";
+                    revision = "ed59f92082b1e93c0e96d60a8b11aab089b52f09";
+                    shards = [
+                        "IQ3_XXS/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00001-of-00002.gguf"
+                        "IQ3_XXS/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00002-of-00002.gguf"
+                    ];
+                    pleIdx = 2;
+                    expertProfile = "expert-profile.bin";
+                };
+
+                maxContext = 524288;
+                parallel = 2;
+
+                arguements = {
+                    kv = "int8";
+                    kv-resident = 32768;
+                };
+            };
         };
     };
 
