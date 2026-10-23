@@ -63,7 +63,9 @@
                     expertProfile = "expert-profile.bin";
                 };
 
-                maxContext = 524288;
+                maxContext = 390000;
+                scaling.enable = true;
+                scaling.factor = 1.5;
                 parallel = 2;
 
                 arguements = {
