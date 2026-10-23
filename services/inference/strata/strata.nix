@@ -9,7 +9,9 @@
         cudaArchitectures = cfg.cuda_architecture;
     };
 
-    unitName = name: "strata-${lib.replaceStrings ["/" " "] ["-" "-"] name}";
+    unitBase = name: lib.replaceStrings ["/" " "] ["-" "-"] name;
+    unitName = name: "strata-${unitBase name}";
+    prepareName = name: "strata-prepare-${unitBase name}";
 
     defaultInstances = lib.attrNames (lib.filterAttrs (_: m: m.isDefault) cfg.instances);
     defaultInstance =
@@ -20,10 +22,10 @@
 
     # Context lengths past the trained 262,144 needs yarn; this auto infers the factor
     defaultContext = 262144;
-    scalingRequired = m: m.scaling.enable && (m.maxContext > defaultContext || m.scaling.factor);
+    scalingRequired = m: m.scaling.enable && (m.maxContext > defaultContext || m.scaling.factor != null);
     scalingFactor = m:
         if m.scaling.enable && m.scaling.factor != null then trimFloat m.scaling.factor
-        else if m.context >= defaultContext && m.scaling.enable then trimFloat (m.maxContext * 1.0 / defaultContext)
+        else if m.maxContext > defaultContext && m.scaling.enable then trimFloat (m.maxContext * 1.0 / defaultContext)
         else "1";
     # Nix's toString renders a float as "1.500000", this corrects
     trimFloat = f: let
@@ -53,16 +55,15 @@
     packDir = name: "${stateDir name}/pack";
     mtpDir = name: "${stateDir name}/mtp";
 
-    pleGetShardIdx = m:
-        if m.models.pleIdx != null 
-        then toString m.models.pleIdx
-        else toString (lib.length m.models.shards);
     engineArgs = name: m:
         [ "--pack" (packDir name)
           "--native" config.services.huggingface-models.paths."${name}-shard1"
         ]
-        ++ lib.optionals (m.model.shards <= 2) [
-            "--ple-gguf" config.services.huggingface-models.paths."${name}-shard${pleGetShardIdx m}"
+        # Only passed when the host says where the PLE (n-gram) table lives;
+        # without it the engine locates the table from shard 1 itself.
+        ++ lib.optionals (m.model.pleIdx != null) [
+            "--ple-gguf"
+            config.services.huggingface-models.paths."${name}-shard${toString m.model.pleIdx}"
         ]
         ++ [ "--expert-profile" "${packages.strata-serve}/share/strata/data/${m.model.expertProfile}"
              "--expert-cache" "auto"
@@ -85,7 +86,6 @@
         cwd = "${packages.strata-serve}/share/strata";
         tokenizer = "${packDir name}/tokenizer";
         model_name = name;
-        aliases = name;
         port = m.port;
         host = m.host;
         log = "${stateDir name}/engine.log";
@@ -94,8 +94,8 @@
         parallel = m.parallel;
     } // m.extraConfig));
 
-    # One-shot preparation: upstream's iq_pack.py turns the GGUF into the engine's pack layout and mtp_fetch/mtp_pack build the draft layer. This is the only part that cannot be a pure derivation -- it reads the multi-gigabyte weights from the mutable model dir -- so it is a guarded oneshot unit keyed on its own output, exactly like hf-model-*.
-    prepareUnit = name: m: lib.nameValuePair "strata-prepare-${name}" {
+    # One-shot preparation: upstream's iq_pack.py turns the GGUF into the engine's pack layout and mtp_fetch/mtp_pack build the draft layer. This is the only part that cannot be a pure derivation -- it reads the multi-GB weights from the mutable model dir -- so it is a guarded oneshot unit keyed on its own output, exactly like hf-model-*.
+    prepareUnit = name: m: lib.nameValuePair (prepareName name) {
         description = "Prepare ${name} for the Strata engine (pack + draft layer)";
 
         after = [ "network-online.target" ]
@@ -155,9 +155,9 @@
     serveUnit = name: m: lib.nameValuePair (unitName name) {
         description = "Strata inference server for model ${name}";
 
-        after = [ "network.target" "strata-prepare-${name}.service" ];
-        wants = [ "strata-prepare-${name}.service" ];
-        requires = [ "strata-prepare-${name}.service" ];
+        after = [ "network.target" "${prepareName name}.service" ];
+        wants = [ "${prepareName name}.service" ];
+        requires = [ "${prepareName name}.service" ];
 
         unitConfig.ConditionPathExists = "${packDir name}/native_experts.txt";
 
@@ -173,8 +173,8 @@
                 "--config" "${runConfig name m}"
                 "--port" (toString m.port)
                 "--host" m.host
-                "--no-api-key"
-            ] ++ lib.optionals (m.parallel != null) 
+            ] ++ lib.optional m.noApiKey "--no-api-key"
+              ++ lib.optionals (m.parallel != null)
                 [ "--parallel" (toString m.parallel) ]);
 
             StateDirectory = "strata/${name}";
@@ -186,6 +186,63 @@
             RestartSec = "10";
         };
     };
+    # Remote control surface for the homeserver's llama-proxy.  The proxy SSHes
+    # in and runs `sudo stratactl <verb>`; everything it is allowed to do is
+    # enumerated here, so the sudo rule below can be a single NOPASSWD entry on
+    # one binary instead of blanket root.  (Same shape as ninferctl; the
+    # prepare unit is reached via Requires= on the serve unit, so start/stop
+    # only ever name the serve unit.)
+    stratactl = pkgs.writeShellScriptBin "stratactl" ''
+        set -euo pipefail
+        # Generated from services.strata.instances -- the only units this tool
+        # may touch.  $2 is used solely as a key into this map, never spliced
+        # into a unit name, so the broad NOPASSWD rule cannot be turned into
+        # "systemctl anything".
+        declare -A units=(
+            ${lib.concatStringsSep "\n            " (lib.mapAttrsToList
+                (name: _: "[${lib.escapeShellArg name}]=${lib.escapeShellArg "${unitName name}.service"}")
+                cfg.instances)}
+        )
+        declare -A prepares=(
+            ${lib.concatStringsSep "\n            " (lib.mapAttrsToList
+                (name: _: "[${lib.escapeShellArg name}]=${prepareName name}.service")
+                cfg.instances)}
+        )
+        default_instance=${lib.escapeShellArg (if defaultInstance == null then "" else defaultInstance)}
+        verb="''${1:-}"; inst="''${2:-$default_instance}"
+        usage() {
+            echo "usage: stratactl {start|stop|restart|status} [instance]" >&2
+            echo "       stratactl {list|poweroff}" >&2
+            echo "instances: ''${!units[*]}" >&2
+            exit 2
+        }
+        case "$verb" in
+            list)     printf '%s\n' "''${!units[@]}"; exit 0 ;;
+            poweroff) exec systemctl poweroff ;;
+            start|stop|restart|status) ;;
+            *) usage ;;
+        esac
+        [ -n "$inst" ] || {
+            echo "stratactl: no instance given and no instance sets isDefault" >&2
+            usage
+        }
+        unit="''${units[$inst]:-}"
+        [ -n "$unit" ] || { echo "stratactl: unknown instance '$inst'" >&2; usage; }
+        case "$verb" in
+            status) exec systemctl is-active "$unit" ;;
+            start)
+                # The serve unit Requires= the prepare unit; pulling it in
+                # first makes `start` self-seeding: on the very first start
+                # the shards download (the prepare unit Requires= the
+                # hf-model units) and the pack is built, and the serve unit's
+                # ConditionPathExists then passes.  With the pack in place
+                # the prepare unit is a no-op (its own condition skips it).
+                systemctl start "''${prepares[$inst]}"
+                exec systemctl start "$unit"
+                ;;
+            *)      exec systemctl "$verb" "$unit" ;;
+        esac
+    '';
 in {
     imports = [ ../huggingface-models.nix ];
 
@@ -196,7 +253,13 @@ in {
 
         modelGateway = lib.mkOption {
             type = lib.types.bool;
-            default = config.services.model-gateway.enable or false;
+            # `options.services ? model-gateway` is an *options* read, not a
+            # config read, so it is cycle-free and also false on a host that
+            # never imports the gateway -- where defining its endpoints would
+            # be an error.
+            default = (options.services ? model-gateway)
+                && (config.services.model-gateway.enable or false);
+            description = "Register every instance with model-gateway.";
         };
 
         instances = lib.mkOption {
@@ -209,9 +272,28 @@ in {
 
                     isDefault = lib.mkOption { type = lib.types.bool; default = false; };
 
+                    noApiKey = lib.mkOption {
+                        type = lib.types.bool;
+                        default = false;
+                        description = ''
+                            Serve without an API key (the serve unit passes
+                            --no-api-key).  Upstream requires this to be
+                            explicit: anyone who can reach the port can then
+                            use the model.
+                        '';
+                    };
+
                     model = {
                         repo = lib.mkOption { type = lib.types.str; };
-                        shards = lib.mkOption { type = lib.types.listOf lib.types.str; };
+                        revision = lib.mkOption {
+                            type = lib.types.str;
+                            default = "main";
+                            description = "Pin a commit sha; \"main\" moves.";
+                        };
+                        shards = lib.mkOption {
+                            type = lib.types.listOf lib.types.str;
+                            description = "Every shard of the release, in order. Shard 1 is the anchor (metadata, --native); iq_pack.py finds the rest by filename.";
+                        };
                         pleIdx = lib.mkOption {
                             type = lib.types.nullOr lib.types.int;
                             default = null;
@@ -288,7 +370,10 @@ in {
                 message = "services.strata: every instance must have a unique port.";
             }
             {
-                assertion = lib.all (m: m.noApiKey || lib.elem m.host [ "127.0.0.1" "::1" "localhost" ])
+                # The serve unit only passes --no-api-key when the instance
+                # opts in, so a non-loopback host must declare that explicitly.
+                assertion = lib.all
+                    (m: m.noApiKey || lib.elem m.host [ "127.0.0.1" "::1" "localhost" ])
                     (lib.attrValues cfg.instances);
                 message = ''
                     services.strata: an instance listening on a non-loopback
@@ -298,17 +383,30 @@ in {
             }
         ];
 
-        environment.systemPackages = [ packages.strata-engine packages.strata-serve ];
+        environment.systemPackages = [ packages.strata-engine packages.strata-serve stratactl ];
+
+        # The proxy SSHes in as karl and runs `sudo stratactl ...`; the unit
+        # names are pinned inside the script, so one NOPASSWD entry on one
+        # binary is the whole grant (same rule ninfer gets for ninferctl).
+        security.sudo.extraRules = [{
+            users = [ "ALL" ];
+            commands = [{
+                command = "/run/current-system/sw/bin/stratactl";
+                options = [ "NOPASSWD" ];
+            }];
+        }];
 
         services = {
             strata.runConfigs = lib.mapAttrs runConfig cfg.instances;
             strata.engineArgv = lib.mapAttrs engineArgs cfg.instances;
 
             huggingface-models.models = lib.mkMerge (lib.mapAttrsToList (name: m:
-                lib.listToAttrs (lib.imap (i: file:
-                    lib.nameValuePair "${name}-shard${toString i}" {
+                # 1-based shard numbers: shard 1 is the anchor (--native) and
+                # pleIdx counts from the same end.
+                lib.listToAttrs (lib.imap0 (i: file:
+                    lib.nameValuePair "${name}-shard${toString (i + 1)}" {
                         repo = m.model.repo;
-                        revision = m.model.revision;
+                        revision = m.model.revision or "main";
                         file = file;
                         target = "${name}-${lib.last (lib.splitString "/" file)}";
                     }

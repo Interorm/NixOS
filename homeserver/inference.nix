@@ -81,8 +81,12 @@
                 ip = "192.168.42.42";
                 user = "karl";
 
-                engine.port = 8080;
-                models = [ "Qwen3.8-27B" ];
+                engine = {
+                    # The PC's Strata unit, controlled like ninferctl.
+                    command = "/run/current-system/sw/bin/stratactl";
+                    port = 8080;
+                };
+                models = [ "Qwen3.8-Flash-Next" ];
 
                 powerManager.enable = true;
                 dndFlag = true;
@@ -101,7 +105,7 @@
             pc = {
                 url = "http://localhost:8090";
                 discovery = "static";
-                models = [ "Qwen3.8-27B" ]; 
+                models = [ "Qwen3.8-Flash-Next" ];
                 healthPath = "/proxy/status";
                 timeout = 1200.0;
             };
