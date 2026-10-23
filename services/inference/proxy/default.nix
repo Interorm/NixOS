@@ -145,11 +145,13 @@ in {
         # users.groups.llama-proxy = {};
 
         services = lib.mkIf cfg.modelGateway {
-            model-gateway.endpoints = lib.mapAttrs (name: m: {
+            model-gateway.endpoints = lib.mkMerge (lib.mapAttrsToList (name: m: {
+            ${name} = {
                 url = "http://localhost:${toString portFor.${name}}";
                 discovery = if m.powerManager.enable then "static" else "probe";
                 prefix = "";
-            }) cfg.remotes;
+            };
+            }) cfg.remotes);
         };
     };
 }
