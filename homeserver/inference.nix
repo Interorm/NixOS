@@ -82,7 +82,6 @@
                 user = "karl";
 
                 engine = {
-                    # The PC's Strata unit, controlled like ninferctl.
                     command = "/run/current-system/sw/bin/ninferctl";
                     port = 8080;
                 };
@@ -97,8 +96,7 @@
                 ip = "192.168.42.42";
                 user = "karl";
 
-                                engine = {
-                    # The PC's Strata unit, controlled like ninferctl.
+                engine = {
                     command = "/run/current-system/sw/bin/stratactl";
                     port = 8090;
                 };
@@ -116,15 +114,5 @@
 
         host = "0.0.0.0";
         port = 8080;
-
-        endpoints = {
-            pc = {
-                url = "http://localhost:8090";
-                discovery = "static";
-                models = [ "Qwen3.8-Flash-Next" ];
-                healthPath = "/proxy/status";
-                timeout = 1200.0;
-            };
-        };
     };
 }
