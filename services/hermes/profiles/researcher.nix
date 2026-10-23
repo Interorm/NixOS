@@ -1,4 +1,4 @@
-{ mcp, ... }:
+{ mcp, config, ... }:
 let
     cfg = config.services.hermes-agents;
 in {
