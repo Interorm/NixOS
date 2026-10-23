@@ -146,11 +146,12 @@ in {
 
         services = lib.mkIf cfg.modelGateway {
             model-gateway.endpoints = lib.mkMerge (lib.mapAttrsToList (name: m: {
-            ${name} = {
-                url = "http://localhost:${toString portFor.${name}}";
-                discovery = if m.powerManager.enable then "static" else "probe";
-                prefix = "";
-            };
+                ${name} = {
+                    url = "http://${cfg.host}:${toString portFor.${name}}";
+                    discovery = if m.powerManager.enable then "static" else "probe";
+                    models = m.models;
+                    healthPath = "/proxy/status";
+                };
             }) cfg.remotes);
         };
     };
