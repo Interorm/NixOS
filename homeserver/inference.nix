@@ -71,6 +71,7 @@
 
     services.llama-proxy = {
         enable = true;
+        modelGateway = true;
 
         port.min = 8090;
         host = "127.0.0.1";
