@@ -42,7 +42,11 @@ in {
         mcpServers = { };
 
         settings = {
-            model_overrides.custom."Qwen3.8-27B".context_window = 240000;
+            model_overrides.custom = {
+                "Qwen3.8-27B".context_window = 240000;
+                "Qwen3.8-Flash-Next".context_window = 390000;
+            };
+
             stt = {
                 enabled = true;
                 provider = "openai";
