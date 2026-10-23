@@ -49,6 +49,7 @@
                 host = "0.0.0.0";
                 port = 8080;
                 isDefault = true;
+                noApiKey = true;
 
                 model = {
                     repo = "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF";

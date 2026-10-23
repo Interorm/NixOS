@@ -20,7 +20,7 @@
         ../modules/apps
         ../modules/gaming
 
-        ./inference-strata.nix
+        ./inference.nix
     ];
 
     networking.hostName = "Karls-PC";

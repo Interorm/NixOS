@@ -54,7 +54,9 @@
             # Strata needs llamacpp as an template for ggml handling
             "-DSTRATA_GGML_DIR=${llamaCppSrc}"
 
-            "-DSTRATA_BUILD_TESTS=OFF"
+            # AVX2-baseline CPU kernels, so the artifact runs on the target
+            # PC instead of whatever CPU happened to build it (without this
+            # the CMake forces GGML_NATIVE on at configure time).
             "-DSTRATA_PORTABLE=ON"
         ];
 
