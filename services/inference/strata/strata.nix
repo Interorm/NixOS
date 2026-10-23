@@ -101,8 +101,6 @@
             ++ map (i: "hf-model-${name}-shard${toString i}.service") (lib.range 1 (lib.length m.model.shards));
         requires = map (i: "hf-model-${name}-shard${toString i}.service") (lib.range 1 (lib.length m.model.shards));
 
-        unitConfig.ConditionPathExists = "!${packDir name}/native_experts.txt";
-
         path = [ packages.pythonEnv pkgs.coreutils ];
 
         environment = {
