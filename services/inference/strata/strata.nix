@@ -49,8 +49,7 @@
     ) attrs);
 
 
-    # The engine reads the prepared pack, not the GGUF, so each instance has a
-    # per-instance state dir holding what `iq_pack.py` / `mtp_pack.py` produced.
+    # The engine reads the prepared pack, not the GGUF, so each instance has a per-instance state dir holding what `iq_pack.py` / `mtp_pack.py` produced.
     stateDir = name: "/var/lib/strata/${name}";
     packDir = name: "${stateDir name}/pack";
     mtpDir = name: "${stateDir name}/mtp";
@@ -59,8 +58,6 @@
         [ "--pack" (packDir name)
           "--native" config.services.huggingface-models.paths."${name}-shard1"
         ]
-        # Only passed when the host says where the PLE (n-gram) table lives;
-        # without it the engine locates the table from shard 1 itself.
         ++ lib.optionals (m.model.pleIdx != null) [
             "--ple-gguf"
             config.services.huggingface-models.paths."${name}-shard${toString m.model.pleIdx}"
@@ -186,12 +183,7 @@
             RestartSec = "10";
         };
     };
-    # Remote control surface for the homeserver's llama-proxy.  The proxy SSHes
-    # in and runs `sudo stratactl <verb>`; everything it is allowed to do is
-    # enumerated here, so the sudo rule below can be a single NOPASSWD entry on
-    # one binary instead of blanket root.  (Same shape as ninferctl; the
-    # prepare unit is reached via Requires= on the serve unit, so start/stop
-    # only ever name the serve unit.)
+    # Remote control surface for the homeserver's llama-proxy.  The proxy SSHes in and runs `sudo stratactl <verb>`; everything it is allowed to do is enumerated here, so the sudo rule below can be a single NOPASSWD entry on one binary instead of blanket root.  (Same shape as ninferctl; the prepare unit is reached via Requires= on the serve unit, so start/stop only ever name the serve unit.)
     stratactl = pkgs.writeShellScriptBin "stratactl" ''
         set -euo pipefail
         # Generated from services.strata.instances -- the only units this tool
@@ -231,12 +223,7 @@
         case "$verb" in
             status) exec systemctl is-active "$unit" ;;
             start)
-                # The serve unit Requires= the prepare unit; pulling it in
-                # first makes `start` self-seeding: on the very first start
-                # the shards download (the prepare unit Requires= the
-                # hf-model units) and the pack is built, and the serve unit's
-                # ConditionPathExists then passes.  With the pack in place
-                # the prepare unit is a no-op (its own condition skips it).
+                # The serve unit Requires= the prepare unit; pulling it in first makes `start` self-seeding: on the very first start the shards download (the prepare unit Requires= the hf-model units) and the pack is built, and the serve unit's ConditionPathExists then passes.  With the pack in place the prepare unit is a no-op (its own condition skips it).
                 systemctl start "''${prepares[$inst]}"
                 exec systemctl start "$unit"
                 ;;
@@ -253,12 +240,7 @@ in {
 
         modelGateway = lib.mkOption {
             type = lib.types.bool;
-            # `options.services ? model-gateway` is an *options* read, not a
-            # config read, so it is cycle-free and also false on a host that
-            # never imports the gateway -- where defining its endpoints would
-            # be an error.
-            default = (options.services ? model-gateway)
-                && (config.services.model-gateway.enable or false);
+            default = (options.services ? model-gateway) && (config.services.model-gateway.enable or false);
             description = "Register every instance with model-gateway.";
         };
 
@@ -271,25 +253,11 @@ in {
                     port = lib.mkOption { type = lib.types.port; };
 
                     isDefault = lib.mkOption { type = lib.types.bool; default = false; };
-
-                    noApiKey = lib.mkOption {
-                        type = lib.types.bool;
-                        default = false;
-                        description = ''
-                            Serve without an API key (the serve unit passes
-                            --no-api-key).  Upstream requires this to be
-                            explicit: anyone who can reach the port can then
-                            use the model.
-                        '';
-                    };
+                    noApiKey = lib.mkOption { type = lib.types.bool; default = true; };
 
                     model = {
                         repo = lib.mkOption { type = lib.types.str; };
-                        revision = lib.mkOption {
-                            type = lib.types.str;
-                            default = "main";
-                            description = "Pin a commit sha; \"main\" moves.";
-                        };
+                        revision = lib.mkOption { type = lib.types.str; default = "main"; };
                         shards = lib.mkOption {
                             type = lib.types.listOf lib.types.str;
                             description = "Every shard of the release, in order. Shard 1 is the anchor (metadata, --native); iq_pack.py finds the rest by filename.";
@@ -385,9 +353,7 @@ in {
 
         environment.systemPackages = [ packages.strata-engine packages.strata-serve stratactl ];
 
-        # The proxy SSHes in as karl and runs `sudo stratactl ...`; the unit
-        # names are pinned inside the script, so one NOPASSWD entry on one
-        # binary is the whole grant (same rule ninfer gets for ninferctl).
+        # The proxy SSHes in as karl and runs `sudo stratactl ...`; the unit names are pinned inside the script, so one NOPASSWD entry on one binary is the whole grant (same rule ninfer gets for ninferctl).
         security.sudo.extraRules = [{
             users = [ "ALL" ];
             commands = [{
@@ -401,10 +367,8 @@ in {
             strata.engineArgv = lib.mapAttrs engineArgs cfg.instances;
 
             huggingface-models.models = lib.mkMerge (lib.mapAttrsToList (name: m:
-                # 1-based shard numbers: shard 1 is the anchor (--native) and
-                # pleIdx counts from the same end.
                 lib.listToAttrs (lib.imap0 (i: file:
-                    lib.nameValuePair "${name}-shard${toString (i + 1)}" {
+                    lib.nameValuePair "${name}-shard${toString (i+1)}" {
                         repo = m.model.repo;
                         revision = m.model.revision or "main";
                         file = file;
