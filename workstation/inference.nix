@@ -2,6 +2,7 @@
     config, lib, ...
 }: {
     imports = [ 
+        ../services/inference/dnd-toggle.nix
         ../services/inference/ninfer 
         ../services/inference/strata
     ];
