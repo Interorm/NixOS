@@ -30,7 +30,7 @@ in {
     services.hermes-agents = {
         enable = true;
 
-        defaultModel = "Qwen3.8-27B";
+        defaultModel = "Qwen3.8-Flash-Next";
 
         dashboard.host = "0.0.0.0";
 

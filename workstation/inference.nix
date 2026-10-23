@@ -5,6 +5,7 @@
         ../services/inference/dnd-toggle.nix
         ../services/inference/ninfer 
         ../services/inference/strata
+        ../services/inference/model-gateway
     ];
 
     services.ninfer = {
@@ -74,6 +75,12 @@
                 };
             };
         };
+    };
+
+    services.model-gateway = {
+        enable = true;
+        host = "0.0.0.0";
+        port = 8000;
     };
 
     networking.interfaces."enp6s0".wakeOnLan.enable = true;

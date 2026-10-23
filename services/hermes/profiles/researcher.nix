@@ -1,5 +1,11 @@
-{ mcp, ... }: {
-    model = "Qwen3.8-27B";
+{ mcp, ... }:
+let
+    cfg = config.services.hermes-agents;
+in {
+
+    imports = [../engine];
+
+    model = cfg.defaultModel;
 
     description = ''
         Web research, document analysis, fact-checking and citation gathering. Produces sourced findings, not code.
