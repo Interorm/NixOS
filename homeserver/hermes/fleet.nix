@@ -47,6 +47,14 @@ in {
                 "Qwen3.8-Flash-Next".context_window = 390000;
             };
 
+            compression = {
+                enabled = true;
+                threshold = 0.8;
+
+                tail_mode = "lean";
+                target_ratio = 0.5;
+            };
+
             stt = {
                 enabled = true;
                 provider = "openai";
