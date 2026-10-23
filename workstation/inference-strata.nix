@@ -47,10 +47,12 @@
                 vramReserveMib = 1024;
                 idleUnloadSeconds = 600;
 
-                arguements = {
-                    # Match the model-gateway route name the fleet already uses.
-                    vision = true;
-                };
+                # Text only.  Images would need STRATA_VISION_CUDA=ON in the
+                # engine build (it produces a separate strata-vision binary),
+                # the BF16 mmproj encoder downloaded alongside the weights, and
+                # a "vision" section in the run config naming both -- a bare
+                # --vision flag is not enough.  Left out deliberately rather
+                # than half-wired.
             };
         };
     };
