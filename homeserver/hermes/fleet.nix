@@ -52,7 +52,7 @@ in {
                 threshold = 0.8;
 
                 tail_mode = "lean";
-                target_ratio = 0.5;
+                target_ratio = 0.33;
             };
 
             stt = {
