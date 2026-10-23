@@ -96,9 +96,9 @@
         description = "Prepare ${name} for the Strata engine (pack + draft layer)";
 
         after = [ "network-online.target" ]
-            ++ map (i: "hf-model-${name}-shard${toString i}.service") (lib.range 1 lib.length m.model.shards);
+            ++ map (i: "hf-model-${name}-shard${toString i}.service") (lib.range 1 (lib.length m.model.shards));
         wants = [ "network-online.target" ]
-            ++ map (i: _: "hf-model-${name}-shard${toString i}.service") (lib.range 1 lib.length m.model.shards);
+            ++ map (i: _: "hf-model-${name}-shard${toString i}.service") (lib.range 1 (lib.length m.model.shards));
         requires = map (i: _: "hf-model-${name}-shard${toString i}.service") (lib.range 1 (lib.length m.model.shards));
 
         unitConfig.ConditionPathExists = "!${packDir name}/native_experts.txt";
