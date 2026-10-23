@@ -76,15 +76,31 @@
         host = "127.0.0.1";
 
         remotes = {
-            workstation = {
+            workstation-ninfer = {
                 mac = "A0:AD:9F:B1:E5:DB";
                 ip = "192.168.42.42";
                 user = "karl";
 
                 engine = {
                     # The PC's Strata unit, controlled like ninferctl.
-                    command = "/run/current-system/sw/bin/stratactl";
+                    command = "/run/current-system/sw/bin/ninferctl";
                     port = 8080;
+                };
+                models = [ "Qwen3.8-27B" ];
+
+                powerManager.enable = true;
+                dndFlag = true;
+            };
+
+            workstation-strata = {
+                mac = "A0:AD:9F:B1:E5:DB";
+                ip = "192.168.42.42";
+                user = "karl";
+
+                                engine = {
+                    # The PC's Strata unit, controlled like ninferctl.
+                    command = "/run/current-system/sw/bin/stratactl";
+                    port = 8090;
                 };
                 models = [ "Qwen3.8-Flash-Next" ];
 

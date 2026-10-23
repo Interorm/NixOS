@@ -146,6 +146,12 @@
                     --out ${lib.escapeShellArg "${mtpDir name}/mtp-q2_0.gguf"}
             fi
             mkdir -p ${lib.escapeShellArg "${mtpDir name}/rt"}
+
+            if [ ! -f ${mtpDir name}/rt/dense.txt ]; then
+                python "$tools/mtp_rt.py" \
+                    --gguf ${mtpDir name}/mtp-q2_0.gguf \
+                    --out ${mtpDir name}/rt
+            fi
         '';
     };
 
