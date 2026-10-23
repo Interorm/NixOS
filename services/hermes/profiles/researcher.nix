@@ -1,11 +1,8 @@
 { mcp, config, ... }:
 let
-    cfg = config.services.hermes-agents;
+    defaultModel = config.services.hermes-agents.defaultModel;
 in {
-
-    imports = [../engine];
-
-    model = cfg.defaultModel;
+    model = defaultModel;
 
     description = ''
         Web research, document analysis, fact-checking and citation gathering. Produces sourced findings, not code.
