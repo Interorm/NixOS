@@ -8,7 +8,7 @@
     imports = [
         ./hardware-configuration.nix
         ../modules
-        ../modules/nvidia
+        ../modules/nvidia { cudaPackages = pkgs.cudaPackages_12_9; }
 
         ./users.nix
         ../services/backup.nix

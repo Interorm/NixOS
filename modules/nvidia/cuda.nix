@@ -1,14 +1,15 @@
 {
   pkgs, config, lib,
+  cudaPackages ? pkgs.cudaPackages,
   ...
 }: {
   	nixpkgs.config.allowUnfree = true;
   	nixpkgs.config.cudaSupport = true;
 
-  	environment.systemPackages = with pkgs; [
-        cudaPackages.cudatoolkit
-        cudaPackages.cudnn
-        cudaPackages.cuda_nvcc
+  	environment.systemPackages = with cudaPackages; [
+        cudatoolkit
+        cudnn
+        cuda_nvcc
     ];
 
     environment.variables = {
