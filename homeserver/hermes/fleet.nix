@@ -55,6 +55,27 @@ in {
                 target_ratio = 0.33;
             };
 
+            auxiliary = {
+                approval = {
+                    provider = "custom";
+                    model = "Gemma4-E4B";
+                    base_url = "http://127.0.0.1:8080/v1";
+                    api_key = "\${OPENAI_API_KEY}";
+                };
+                title_generation = {
+                    provider = "custom";
+                    model = "Gemma4-E4B";
+                    base_url = "http://127.0.0.1:8080/v1";
+                    api_key = "\${OPENAI_API_KEY}";
+                };
+                vision = {
+                    provider = "custom";
+                    model = "Gemma4-E4B";
+                    base_url = "http://127.0.0.1:8080/v1";
+                    api_key = "\${OPENAI_API_KEY}";
+                };
+            };
+
             stt = {
                 enabled = true;
                 provider = "openai";

@@ -64,14 +64,15 @@
                     expertProfile = "expert-profile.bin";
                 };
 
-                maxContext = 390000;
+                maxContext = 360000;
                 scaling.enable = true;
                 scaling.factor = 1.5;
-                parallel = 2;
+                parallel = 1;
 
                 arguements = {
                     kv = "int8";
                     kv-resident = 32768;
+                    conversation-cache-mib = 3072;
                 };
             };
         };
