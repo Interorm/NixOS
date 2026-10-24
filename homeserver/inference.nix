@@ -77,21 +77,21 @@
         port.min = 8090;
         host = "127.0.0.1";
 
-        # remotes = {
-        #     workstation-ninfer = {
-        #         mac = "A0:AD:9F:B1:E5:DB";
-        #         ip = "192.168.42.42";
-        #         user = "karl";
+        remotes = {
+            # workstation-ninfer = {
+            #     mac = "A0:AD:9F:B1:E5:DB";
+            #     ip = "192.168.42.42";
+            #     user = "karl";
 
-        #         engine = {
-        #             command = "/run/current-system/sw/bin/ninferctl";
-        #             port = 8080;
-        #         };
-        #         models = [ "Qwen3.8-27B" ];
+            #     engine = {
+            #         command = "/run/current-system/sw/bin/ninferctl";
+            #         port = 8080;
+            #     };
+            #     models = [ "Qwen3.8-27B" ];
 
-        #         powerManager.enable = true;
-        #         dndFlag = true;
-        #     };
+            #     powerManager.enable = true;
+            #     dndFlag = true;
+            # };
 
             workstation-strata = {
                 mac = "A0:AD:9F:B1:E5:DB";
