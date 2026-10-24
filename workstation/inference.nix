@@ -77,12 +77,6 @@
         };
     };
 
-    services.model-gateway = {
-        enable = true;
-        host = "0.0.0.0";
-        port = 8000;
-    };
-
     networking.interfaces."enp6s0".wakeOnLan.enable = true;
 
     services.openssh = { enable = true; };
