@@ -1,6 +1,6 @@
 {
     pkgs, config, lib,
-    cudaPackages ? pkgs.cudaPackages,
+    cudaPackages,
     ...
 }: let
 
@@ -8,7 +8,7 @@
 
     llamacpp = (pkgs.llama-cpp.override {
         cudaSupport = true;
-        cudaPackages = cudaPackages;
+        inherit cudaPackages;
     }).overrideAttrs (oldAttrs: {
         cmakeFlags = (oldAttrs.cmakeFlags or []) ++ [
             ("-DGGML_CUDA=" + (if cfg.cuda then "ON" else "OFF"))

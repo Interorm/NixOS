@@ -8,7 +8,7 @@
     imports = [
         ./hardware-configuration.nix
         ../modules
-        ../modules/nvidia { cudaPackages = pkgs.cudaPackages_12_9; }
+        ../modules/nvidia
 
         ./users.nix
         ../services/backup.nix
@@ -30,6 +30,7 @@
     ];
     age.identityPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
 
+    _module.args.cudaPackages = pkgs.cudaPackages_12_9;
     hardware.nvidia = {
         package = config.boot.kernelPackages.nvidiaPackages.legacy_580;
         open = false;

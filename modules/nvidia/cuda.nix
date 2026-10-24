@@ -1,6 +1,6 @@
 {
   pkgs, config, lib,
-  cudaPackages ? pkgs.cudaPackages,
+  cudaPackages,
   ...
 }: {
   	nixpkgs.config.allowUnfree = true;
@@ -13,8 +13,8 @@
     ];
 
     environment.variables = {
-        CUDA_PATH = "${pkgs.cudaPackages.cudatoolkit}";
-        CUDA_HOME = "${pkgs.cudaPackages.cudatoolkit}";
+        CUDA_PATH = "${cudaPackages.cudatoolkit}";
+        CUDA_HOME = "${cudaPackages.cudatoolkit}";
     };
 
     nix.settings = {

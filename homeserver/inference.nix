@@ -4,7 +4,7 @@
 }: {
 
     imports = [ 
-        ../services/inference/llama-cpp { cudaPackages = pkgs.cudaPackages_12_9; } 
+        ../services/inference/llama-cpp 
         ../services/inference/model-gateway
         ../services/inference/proxy 
     ];
