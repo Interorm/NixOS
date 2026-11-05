@@ -51,6 +51,9 @@
     };
 
 
+    messagingEnvPrefixes = "TELEGRAM|WHATSAPP|DISCORD|SLACK|SIGNAL";
+
+
     # Remove mcp_servers entries the Nix config no longer declares.
     pruneMcpScript = pkgs.writers.writePython3 "hermes-prune-mcp"
         { libraries = [ pkgs.python3Packages.pyyaml ]; flakeIgnore = [ "E501" ]; }
@@ -285,6 +288,8 @@
                 };
             } // lib.optionalAttrs cfg.tools.browsing.enable {
                 browser.executable_path = lib.getExe cfg.tools.browsing.package;
+            } // lib.optionalAttrs agent.messaging.whatsapp {
+                whatsapp.unauthorized_dm_behavior = "ignore";
             }) cfg.settings) agent.settings;
 
             hermesHomeFiles = lib.optionalAttrs (agent.soul != null) {
@@ -306,14 +311,17 @@
         };
 
         # Each declared sub-profile needs its OWN .env.  
-        home.activation.hermesProfileEnv = lib.hm.dag.entryAfter [ "hermesAgentSetup" ] (
-            lib.concatMapStringsSep "\n" (pname: ''
-                $DRY_RUN_CMD ${pkgs.coreutils}/bin/install -D -m 0600 \
-                    ${lib.escapeShellArg agent.environmentFile} \
+        home.activation.hermesProfileEnv = lib.hm.dag.entryAfter [ "hermesAgentSetup" ] ''
+            filtered=$(${pkgs.coreutils}/bin/mktemp)
+            ${pkgs.gnugrep}/bin/grep -v -E '^(${messagingEnvPrefixes})_' \
+                ${lib.escapeShellArg agent.environmentFile} > "$filtered" || [ $? -eq 1 ]
+            ${lib.concatMapStringsSep "\n" (pname: ''
+                $DRY_RUN_CMD ${pkgs.coreutils}/bin/install -D -m 0600 "$filtered" \
                     ${lib.escapeShellArg "/home/${name}/.hermes/profiles/${pname}/.env"}
-            '') (lib.attrNames agent.profiles)
-        );
-
+            '') (lib.attrNames agent.profiles)}
+            ${pkgs.coreutils}/bin/rm -f "$filtered"
+        '';
+        
         # Create agent profiles via standard command
         home.activation.hermesProfileCreate =
             lib.mkIf (agent.profiles != {})
@@ -330,6 +338,15 @@
                     ${lib.escapeShellArg "/home/${name}/.hermes/google"}
             ''
         );
+
+        home.activation.hermesWhatsappBridge = lib.mkIf agent.messaging.whatsapp
+            (lib.hm.dag.entryAfter [ "hermesAgentSetup" ] ''
+                dst=/home/${name}/.hermes/scripts/whatsapp-bridge
+                $DRY_RUN_CMD ${pkgs.coreutils}/bin/mkdir -p "$dst"
+                $DRY_RUN_CMD ${pkgs.coreutils}/bin/cp -rT --no-preserve=mode \
+                ${inputs.hermes-agent}/scripts/whatsapp-bridge "$dst"
+            '');
+
 
         # Drop MCP servers not listed in the current MCP config.
         home.activation.hermesPruneMcp = lib.hm.dag.entryAfter [ "hermesAgentSetup" ] ''
