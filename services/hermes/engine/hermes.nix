@@ -249,7 +249,7 @@
             extraPackages = agent.extraPackages
                 ++ cfg.extraPackages
                 ++ [ pkgs.systemd ]
-                ++ lib.optionals (cfg.tools.browsing.enable) (cfg.tools.browsing.package)
+                ++ lib.optionals cfg.tools.browsing.enable [ cfg.tools.browsing.package ]
                 # Add googlePython and all wrappers if enabled
                 ++ lib.optionals (gapi != null) ([ googlePython ] ++ gapi.packages);
 
@@ -700,6 +700,7 @@ in {
                 package = lib.mkOption {
                     type = lib.types.package;
                     default = pkgs.chromium;
+                };
             };
         };
 
