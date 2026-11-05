@@ -719,7 +719,8 @@ in {
         agentList = lib.attrValues cfg.agents;
         apiPorts = lib.filter (p: p != null) (map (a: a.apiServerPort) agentList);
         dashPorts = map (a: a.dashboard.port) (lib.filter (a: a.dashboard.enable) agentList);
-        allPorts = dashPorts ++ apiPorts;
+        webPorts = map (a: a.webapp.port) (lib.filter (a: a.webapp.enable) agentList);
+        allPorts = dashPorts ++ apiPorts ++ webPorts;
 
         allMcpEntries = lib.unique (
             lib.concatMap (agent:
