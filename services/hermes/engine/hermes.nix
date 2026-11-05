@@ -716,7 +716,7 @@ in {
         apiPorts = lib.filter (p: p != null) (map (a: a.apiServerPort) agentList);
         dashPorts = map (a: a.dashboard.port) (lib.filter (a: a.dashboard.enable) agentList);
         testPorts = map (a: a.dashboard.port + 900) (lib.filter (a: a.dashboard.enable) agentList)
-        allPorts = dashPorts ++ apiPorts;
+        allPorts = dashPorts ++ apiPorts ++ testPorts;
 
         allMcpEntries = lib.unique (
             lib.concatMap (agent:
