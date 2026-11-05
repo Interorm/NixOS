@@ -288,9 +288,9 @@
             } // mkProfileFiles agent;
 
 
-            backend = lib.mkIf (agent.dashboard.enable && !agent.dashboard.webapp) {
+            backend = lib.mkIf agent.dashboard.enable {
                 mode = "dashboard";
-                port = agent.dashboard.port;
+                port = agent.dashboard.port + 900;
                 host = lib.mkIf (cfg.dashboard.host != null) cfg.dashboard.host;
                 sessionTokenFile = agent.dashboard.sessionTokenFile;
 
