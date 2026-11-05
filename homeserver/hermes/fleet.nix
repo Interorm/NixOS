@@ -43,10 +43,13 @@ in {
         dashboard.host = "0.0.0.0";
 
         dependencyGroups = [ "messaging" "anthropic" ];
-        extraPackages = [ pkgs.chromium pkgs.agent-browser ];
+        extraPackages = [ ];
         
-        docling.enable = enable_docling;
-        firecrawl.enable = enable_firecrawl;
+        tools = {
+            docling.enable = enable_docling;
+            firecrawl.enable = enable_firecrawl;
+            browsing.enable = true;
+        };
 
         mcpServers = { };
 

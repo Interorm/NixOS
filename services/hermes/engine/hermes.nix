@@ -38,8 +38,8 @@
         name = "hermes-docling-pdf-hook";
         runtimeInputs = with pkgs; [ jq curl coreutils ];
         text = ''
-            export DOCLING_URL=${lib.escapeShellArg cfg.docling.url}
-            export DOCLING_TIMEOUT=${toString cfg.docling.timeout}
+            export DOCLING_URL=${lib.escapeShellArg cfg.tools.docling.url}
+            export DOCLING_TIMEOUT=${toString cfg.tools.docling.timeout}
         '' + builtins.readFile ./docling/docling-pdf-hook.sh;
     };
 
@@ -240,8 +240,8 @@
                 HERMES_DASHBOARD_BASIC_AUTH_USERNAME = name;
             } // lib.optionalAttrs agent.obsidian.enable {
                 OBSIDIAN_VAULT_PATH = "/home/${name}/${agent.obsidian.vault}";
-            } // lib.optionalAttrs cfg.firecrawl.enable {
-                FIRECRAWL_API_URL = cfg.firecrawl.url;
+            } // lib.optionalAttrs cfg.tools.firecrawl.enable {
+                FIRECRAWL_API_URL = cfg.tools.firecrawl.url;
             };
 
             extraDependencyGroups = cfg.dependencyGroups;
@@ -249,6 +249,7 @@
             extraPackages = agent.extraPackages
                 ++ cfg.extraPackages
                 ++ [ pkgs.systemd ]
+                ++ lib.optionals (cfg.tools.browsing.enable) cfg.tools.browsing.package
                 # Add googlePython and all wrappers if enabled
                 ++ lib.optionals (gapi != null) ([ googlePython ] ++ gapi.packages);
 
@@ -263,11 +264,11 @@
                 };
             } // {
                 skills.external_dirs = allSkillDirs;
-            } // lib.optionalAttrs cfg.docling.enable {
+            } // lib.optionalAttrs cfg.tools.docling.enable {
                 hooks.pre_tool_call = [{
                     matcher = "read_file";
                     command = doclingHookCommand;
-                    timeout = cfg.docling.timeout + 10;
+                    timeout = cfg.tools.docling.timeout + 10;
                     fail_closed = true;
                 }];
             } // lib.optionalAttrs agent.dashboard.webapp {
@@ -276,11 +277,13 @@
                     host = cfg.dashboard.host;
                     port = agent.dashboard.port;
                 };
+            } // lib.optionalAttrs cfg.tools.browsing.enable {
+                browser.executable_path = lib.getExe cfg.tools.browsing.package;
             }) cfg.settings) agent.settings;
 
             hermesHomeFiles = lib.optionalAttrs (agent.soul != null) {
                 "SOUL.md" = agent.soul;
-            } // lib.optionalAttrs cfg.docling.enable {
+            } // lib.optionalAttrs cfg.tools.docling.enable {
                 "shell-hooks-allowlist.json" = doclingAllowlist;
             } // mkProfileFiles agent;
 
@@ -648,43 +651,55 @@ in {
             description = "Additional settings";
         };
 
-        docling = {
-            enable = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Enable pdf-parsing via docling";
+        tools = {
+
+            docling = {
+                enable = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = "Enable pdf-parsing via docling";
+                };
+                url = lib.mkOption {
+                    type = lib.types.nullOr lib.types.str;
+                    default = 
+                        if config.services.docling.enable 
+                        then "http://127.0.0.1:${toString config.services.docling.port}"
+                        else null;
+                    description = "url";
+                };
+                timeout = lib.mkOption {
+                    type = lib.types.int;
+                    default = 120;
+                    description = "Maximum time docling has for conversion";
+                };
             };
 
-            url = lib.mkOption {
-                type = lib.types.nullOr lib.types.str;
-                default = 
-                    if config.services.docling.enable 
-                    then "http://127.0.0.1:${toString config.services.docling.port}"
-                    else null;
-                description = "url";
+            firecrawl = {
+                enable = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = "Enable web crawling via firecrawl";
+                };
+                url = lib.mkOption {
+                    type = lib.types.nullOr lib.types.str;
+                    default = 
+                        if config.services.firecrawl.enable
+                        then "http://127.0.0.1:${toString config.services.firecrawl.port}"
+                        else null;
+                    description = "url";
+                };
             };
 
-            timeout = lib.mkOption {
-                type = lib.types.int;
-                default = 120;
-                description = "Maximum time docling has for conversion";
-            };
-        };
+            browsing = {
+                enable = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = "Enable web crawling via firecrawl";
+                };
 
-        firecrawl = {
-            enable = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Enable web crawling via firecrawl";
-            };
-
-            url = lib.mkOption {
-                type = lib.types.nullOr lib.types.str;
-                default = 
-                    if config.services.firecrawl.enable
-                    then "http://127.0.0.1:${toString config.services.firecrawl.port}"
-                    else null;
-                description = "url";
+                package = lib.mkOption {
+                    type = lib.types.package;
+                    default = pkgs.chromium;
             };
         };
 
@@ -732,8 +747,8 @@ in {
             }
             {
                 # The hook fails closed, so pointing it at nothing would turn every PDF read into a blocked tool call.  
-                assertion = !cfg.docling.enable || (cfg.docling.url != null && !lib.hasSuffix "/" cfg.docling.url);
-                message = "services.hermes-agents.docling.url must be non-empty and have no trailing slash.";
+                assertion = !cfg.tools.docling.enable || (cfg.tools.docling.url != null && !lib.hasSuffix "/" cfg.tools.docling.url);
+                message = "services.hermes-agents.tools.docling.url must be non-empty and have no trailing slash.";
             }
         ];
 
