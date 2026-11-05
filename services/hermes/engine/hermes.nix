@@ -280,6 +280,8 @@
                     timeout = cfg.docling.timeout + 10;
                     fail_closed = true;
                 }];
+            } // lib.optionalAttrs agent.dashboard.mobile {
+                webapp.enabled = true;
             }) cfg.settings) agent.settings;
 
             hermesHomeFiles = lib.optionalAttrs (agent.soul != null) {
@@ -497,6 +499,12 @@
                     type = lib.types.port;
                     example = 9119;
                     description = "Port for the gateway and dashboard";
+                };
+
+                mobile = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = "Enable native Hermes-Desktop-based Web-App instead of TUI";
                 };
 
                 sessionTokenFile = lib.mkOption {
