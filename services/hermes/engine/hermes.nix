@@ -281,7 +281,7 @@
                     fail_closed = true;
                 }];
             } // lib.optionalAttrs agent.webapp.enable {
-                webapp. = {
+                webapp = {
                     enabled = true;
                     host = cfg.dashboard.host;
                     port = agent.webapp.port
