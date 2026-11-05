@@ -23,7 +23,7 @@ in {
         ];
 
         mcpServers = {
-            inherit (mcp) github nixos firecrawl context7 deepwiki;
+            inherit (mcp) github nixos context7 deepwiki;
         };
 
         soul = ''

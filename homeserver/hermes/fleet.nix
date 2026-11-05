@@ -4,6 +4,7 @@
 }: let
 
     enable_docling = true;
+    enable_firecrawl = true;
 
     stt = "deepdml/faster-whisper-large-v3-turbo-ct2";
     tts = "speaches-ai/Kokoro-82M-v1.0-ONNX";
@@ -14,6 +15,13 @@ in {
         enable = enable_docling;
         gpu = "0";
         memoryFraction = "0.24";
+    };
+
+    services.firecrawl = {
+        enable = enable_firecrawl;
+        port = 3030;
+        memory = "4g";
+        memory-playwright = "2g";
     };
 
     services.speaches = lib.mkIf ((stt != null) || (tts != null)) {
@@ -36,8 +44,9 @@ in {
 
         dependencyGroups = [ "messaging" "anthropic" ];
         extraPackages = [ pkgs.chromium pkgs.agent-browser ];
+        
         docling.enable = enable_docling;
-
+        firecrawl.enable = enable_firecrawl;
 
         mcpServers = { };
 

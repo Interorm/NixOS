@@ -240,6 +240,8 @@
                 HERMES_DASHBOARD_BASIC_AUTH_USERNAME = name;
             } // lib.optionalAttrs agent.obsidian.enable {
                 OBSIDIAN_VAULT_PATH = "/home/${name}/${agent.obsidian.vault}";
+            } // lib.optionalAttrs cfg.firecrawl.enable {
+                FIRECRAWL_API_URL = cfg.firecrawl.url;
             };
 
             extraDependencyGroups = cfg.dependencyGroups;
@@ -666,6 +668,23 @@ in {
                 type = lib.types.int;
                 default = 120;
                 description = "Maximum time docling has for conversion";
+            };
+        };
+
+        firecrawl = {
+            enable = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Enable web crawling via firecrawl";
+            };
+
+            url = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = 
+                    if config.services.firecrawl.enable
+                    then "http://127.0.0.1:${toString config.services.firecrawl.port}"
+                    else null;
+                description = "url";
             };
         };
 

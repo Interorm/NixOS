@@ -77,7 +77,7 @@ in {
             };
         };
         mcpServers = {
-            inherit (mcp) github nixos firecrawl context7 deepwiki onedrive fints;
+            inherit (mcp) github nixos context7 deepwiki onedrive fints;
         };
 
         soul = ''
@@ -110,10 +110,6 @@ in {
             settings = {
                 alwaysUpdateLinks = true;
             };
-        };
-
-        profiles = {
-            inherit (profiles) orchestrator coder nixos hr researcher;
         };
     };
 }

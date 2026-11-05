@@ -11,7 +11,7 @@ in {
     toolsets = [ "hermes-cli" ];
 
     mcpServers = {
-        inherit (mcp) firecrawl context7 deepwiki;
+        inherit (mcp) context7 deepwiki;
     };
 
     settings = { };

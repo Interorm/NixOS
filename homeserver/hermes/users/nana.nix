@@ -10,7 +10,7 @@ in {
         sshKeys = [];
 
         mcpServers = {
-            inherit (mcp) firecrawl context7;
+            inherit (mcp) context7;
         };
 
         soul = ''
