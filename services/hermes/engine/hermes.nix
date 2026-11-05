@@ -284,7 +284,7 @@
                 webapp = {
                     enabled = true;
                     host = cfg.dashboard.host;
-                    port = agent.webapp.port
+                    port = agent.webapp.port;
                 };
             }) cfg.settings) agent.settings;
 
