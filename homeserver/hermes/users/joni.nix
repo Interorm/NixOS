@@ -10,7 +10,8 @@ in {
     };
 
     services.hermes-agents.agents.joni = {
-        dashboard.port = 9080;
+        dashboard.port = 9980;
+        webapp.port = 9080;
 
         sshKeys = [
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOH8RZAPIW6QtCf47hpdpLhPVd30PtbktPPSQJ6JooPd jonbrod@laptop"

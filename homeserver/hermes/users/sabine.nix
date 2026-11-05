@@ -6,6 +6,7 @@
 in {
     services.hermes-agents.agents.sabine = {
         dashboard.port = 9070;
+        webapp.port = 9970;
 
         sshKeys = [ ];
 

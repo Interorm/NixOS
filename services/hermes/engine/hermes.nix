@@ -231,7 +231,10 @@
             gateway.enable = true;
 
             environmentFiles = [ agent.environmentFile ];
-            environment = lib.optionalAttrs (agent.apiServerPort != null) {
+            environment = lib.optionalAttrs agent.messaging.whatsapp {
+                WHATSAPP_ENABLED = "true";
+                WHATSAPP_MODE = "bot";
+            } // lib.optionalAttrs (agent.apiServerPort != null) {
                 API_SERVER_ENABLED = "true";
                 API_SERVER_PORT = toString agent.apiServerPort;
                 API_SERVER_HOST = "0.0.0.0";
@@ -244,7 +247,10 @@
                 FIRECRAWL_API_URL = cfg.tools.firecrawl.url;
             };
 
-            extraDependencyGroups = cfg.dependencyGroups;
+            extraDependencyGroups = lib.unique (
+                cfg.dependencyGroups
+                ++ lib.optionals agent.messaging.telegram ["messaging"]
+            );
 
             extraPackages = agent.extraPackages
                 ++ cfg.extraPackages
@@ -271,11 +277,11 @@
                     timeout = cfg.tools.docling.timeout + 10;
                     fail_closed = true;
                 }];
-            } // lib.optionalAttrs agent.dashboard.webapp {
+            } // lib.optionalAttrs agent.webapp.enable {
                 webapp = {
                     enabled = true;
                     host = cfg.dashboard.host;
-                    port = agent.dashboard.port;
+                    port = agent.webapp.port;
                 };
             } // lib.optionalAttrs cfg.tools.browsing.enable {
                 browser.executable_path = lib.getExe cfg.tools.browsing.package;
@@ -290,7 +296,7 @@
 
             backend = lib.mkIf agent.dashboard.enable {
                 mode = "dashboard";
-                port = agent.dashboard.port + 900;
+                port = agent.dashboard.port;
                 host = lib.mkIf (cfg.dashboard.host != null) cfg.dashboard.host;
                 sessionTokenFile = agent.dashboard.sessionTokenFile;
 
@@ -486,13 +492,6 @@
                     description = "Enable online dashboard";
                 };
 
-                webapp = lib.mkOption {
-                    type = lib.types.bool;
-                    default = true;
-                    description = "Enable online dashboard";
-                };
-
-
                 port = lib.mkOption {
                     type = lib.types.port;
                     example = 9119;
@@ -504,6 +503,34 @@
                     default = null;
                     example = "/etc/hermes/${name}.token";
                     description = "Optional to add a permanent access token. Otherwise generates new access token on restart";
+                };
+            };
+
+            webapp = {
+                enable = lib.mkOption {
+                    type = lib.types.bool;
+                    default = true;
+                    description = "Enable online dashboard";
+                };
+
+                port = lib.mkOption {
+                    type = lib.types.port;
+                    example = 9119;
+                    description = "Port for the gateway and dashboard";
+                };
+            };
+
+            messaging = {
+                whatsapp = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = "Enable WhatsApp bot";
+                };
+
+                telegram = lib.mkOption {
+                    type = lib.types.bool;
+                    default = true;
+                    description = "Enable WhatsApp bot";
                 };
             };
 
@@ -614,7 +641,7 @@ in {
 
         dependencyGroups = lib.mkOption {
             type = lib.types.listOf lib.types.str;
-            default = [ "messaging" ];
+            default = [];
             description = "Hermes pyproject extras compiled into the venv. 'messaging' is Telegram, Discord and Slack. Shared by all agents";
         };
 
@@ -715,8 +742,8 @@ in {
         agentList = lib.attrValues cfg.agents;
         apiPorts = lib.filter (p: p != null) (map (a: a.apiServerPort) agentList);
         dashPorts = map (a: a.dashboard.port) (lib.filter (a: a.dashboard.enable) agentList);
-        testPorts = map (a: a.dashboard.port + 900) (lib.filter (a: a.dashboard.enable) agentList);
-        allPorts = dashPorts ++ apiPorts ++ testPorts;
+        webPorts = map (a: a.webapp.port) (lib.filter (a: a.webapp.enable) agentList);
+        allPorts = dashPorts ++ apiPorts ++ webPorts;
 
         allMcpEntries = lib.unique (
             lib.concatMap (agent:

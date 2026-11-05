@@ -42,7 +42,7 @@ in {
 
         dashboard.host = "0.0.0.0";
 
-        dependencyGroups = [ "messaging" "anthropic" ];
+        dependencyGroups = [ "anthropic" ];
         extraPackages = [ ];
         
         tools = {
