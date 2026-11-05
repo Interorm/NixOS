@@ -6,7 +6,6 @@
 in {
     services.hermes-agents.agents.nana = {
         dashboard.port = 9060;
-        mobile.enable = true;
 
         sshKeys = [];
 

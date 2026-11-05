@@ -88,13 +88,6 @@
         '';
 
 
-    hermesMobile = import ./hermes-mobile.nix {
-        inherit lib pkgs;
-        hermesUpstream = inputs.hermes-agent.packages.${pkgs.stdenv.hostPlatform.system}.default;
-        inherit (cfg.mobile) rev hash;
-    };
-
-
     stripMcpMeta = lib.mapAttrs (_: srv: removeAttrs srv [ "meta" ]);
 
     # This essentially just pulls all data from the MCP
@@ -137,10 +130,7 @@
     # Create each declared sub-profile with Hermes' OWN `profile create`,
     # before any of this module's files are written into it.
     mkProfileCreateScript = name: agent: let
-        hermesBin = "${
-            if agent.mobile.enable then hermesMobile.package else
-            inputs.hermes-agent.packages.${pkgs.stdenv.hostPlatform.system}.default
-        }/bin/hermes";
+        hermesBin = "${inputs.hermes-agent.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/hermes";
         home = "/home/${name}/.hermes";
     in lib.concatMapStringsSep "\n" (pname: let
         p = agent.profiles.${pname};
@@ -240,8 +230,6 @@
             enable = true;
             gateway.enable = true;
 
-            package = lib.mkIf agent.mobile.enable hermesMobile.package;
-
             environmentFiles = [ agent.environmentFile ];
             environment = lib.optionalAttrs (agent.apiServerPort != null) {
                 API_SERVER_ENABLED = "true";
@@ -280,11 +268,11 @@
                     timeout = cfg.docling.timeout + 10;
                     fail_closed = true;
                 }];
-            } // lib.optionalAttrs agent.webapp.enable {
+            } // lib.optionalAttrs agent.dashboard.webapp {
                 webapp = {
                     enabled = true;
                     host = cfg.dashboard.host;
-                    port = agent.webapp.port;
+                    port = agent.dashboard.port;
                 };
             }) cfg.settings) agent.settings;
 
@@ -486,18 +474,19 @@
                 description = "ssh-key used to a) encrypt the agenix secrets and b) access the terminal";
             };
 
-            mobile.enable = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Make dashboard look like desktop app to make mobile access seemless";
-            };
-
             dashboard = {
                 enable = lib.mkOption {
                     type = lib.types.bool;
                     default = true;
                     description = "Enable online dashboard";
                 };
+
+                webapp = lib.mkOption {
+                    type = lib.types.bool;
+                    default = true;
+                    description = "Enable online dashboard";
+                };
+
 
                 port = lib.mkOption {
                     type = lib.types.port;
@@ -510,20 +499,6 @@
                     default = null;
                     example = "/etc/hermes/${name}.token";
                     description = "Optional to add a permanent access token. Otherwise generates new access token on restart";
-                };
-            };
-
-            webapp = {
-                enable = lib.mkOption {
-                    type = lib.types.bool;
-                    default = false;
-                    description = "Enable webapp";
-                };
-
-                port = lib.mkOption {
-                    type = lib.types.port;
-                    example = 9119;
-                    description = "Port for the gateway and dashboard";
                 };
             };
 
@@ -632,20 +607,6 @@ in {
             };
         };
 
-        mobile = {
-            rev = lib.mkOption {
-                type = lib.types.str;
-                default = "864514961e57a83ebe4684a480279be35534e8f1";
-                description = "sremes/hermes-mobile commit the PWA is built from, for agents with `mobile.enable`";
-            };
-
-            hash = lib.mkOption {
-                type = lib.types.str;
-                default = "sha256-DVXku5yg5iK/FtXQ0k3bRFy1NpZxR6cb1H0wEzBrXLw=";
-                description = "SRI hash of the source tree for `mobile.rev`.  Obtain with `nix flake prefetch --json github:sremes/hermes-mobile/<rev>`.";
-            };
-        };
-
         dependencyGroups = lib.mkOption {
             type = lib.types.listOf lib.types.str;
             default = [ "messaging" ];
@@ -719,8 +680,7 @@ in {
         agentList = lib.attrValues cfg.agents;
         apiPorts = lib.filter (p: p != null) (map (a: a.apiServerPort) agentList);
         dashPorts = map (a: a.dashboard.port) (lib.filter (a: a.dashboard.enable) agentList);
-        webPorts = map (a: a.webapp.port) (lib.filter (a: a.webapp.enable) agentList);
-        allPorts = dashPorts ++ apiPorts ++ webPorts;
+        allPorts = dashPorts ++ apiPorts;
 
         allMcpEntries = lib.unique (
             lib.concatMap (agent:
