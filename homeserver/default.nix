@@ -25,6 +25,8 @@
 
     networking.hostName = "homeserver";
 
+    programs.nix-ld.enable = true;
+    
     environment.systemPackages = [
         inputs.agenix.packages.${pkgs.stdenv.hostPlatform.system}.default
     ];
