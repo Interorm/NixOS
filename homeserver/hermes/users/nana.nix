@@ -5,7 +5,8 @@
     inherit (import ../../../services/hermes/lib.nix { inherit pkgs config lib; }) mcp profiles;
 in {
     services.hermes-agents.agents.nana = {
-        dashboard.port = 9060;
+        dashboard.port = 9960;
+        webapp.port = 9060;
 
         sshKeys = [];
 
