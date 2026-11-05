@@ -280,8 +280,12 @@
                     timeout = cfg.docling.timeout + 10;
                     fail_closed = true;
                 }];
-            } // lib.optionalAttrs agent.dashboard.mobile {
-                webapp.enabled = true;
+            } // lib.optionalAttrs agent.webapp.enable {
+                webapp. = {
+                    enabled = true;
+                    host = cfg.dashboard.host;
+                    port = agent.webapp.port
+                };
             }) cfg.settings) agent.settings;
 
             hermesHomeFiles = lib.optionalAttrs (agent.soul != null) {
@@ -501,17 +505,25 @@
                     description = "Port for the gateway and dashboard";
                 };
 
-                mobile = lib.mkOption {
-                    type = lib.types.bool;
-                    default = false;
-                    description = "Enable native Hermes-Desktop-based Web-App instead of TUI";
-                };
-
                 sessionTokenFile = lib.mkOption {
                     type = lib.types.nullOr lib.types.str;
                     default = null;
                     example = "/etc/hermes/${name}.token";
                     description = "Optional to add a permanent access token. Otherwise generates new access token on restart";
+                };
+            };
+
+            webapp = {
+                enable = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                    description = "Enable webapp";
+                };
+
+                port = lib.mkOption {
+                    type = lib.types.port;
+                    example = 9119;
+                    description = "Port for the gateway and dashboard";
                 };
             };
 

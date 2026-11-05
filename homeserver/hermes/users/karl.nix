@@ -19,7 +19,10 @@ in {
 
     services.hermes-agents.agents.karl = {
         dashboard.port = 9090;
-        dashboard.mobile = true;
+        webapp = {
+            enable = true;
+            port = 9990;
+        };
 
         sshKeys = [
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMH2S3ZA0agXgsNM8RWJ1JvJrfe2Bq00Zc2mQwmjhAjX karli@Karls-Surface"
