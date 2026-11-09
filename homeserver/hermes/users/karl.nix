@@ -80,7 +80,7 @@ in {
             };
         };
         mcpServers = {
-            inherit (mcp) github nixos context7 deepwiki onedrive fints;
+            inherit (mcp) canva github nixos context7 deepwiki onedrive fints;
         };
 
         soul = ''
