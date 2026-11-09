@@ -99,6 +99,7 @@
         // lib.optionalAttrs (srv ? env) { inherit (srv) env; }
         // lib.optionalAttrs (srv ? url) { inherit (srv) url; }
         // lib.optionalAttrs (srv ? headers) { inherit (srv) headers; }
+        // lib.optionalAttrs (srv ? auth) {inherit (srv) auth; }
         // { enabled = srv.enabled or true; };
 
     # One profile's config.yaml
