@@ -57,6 +57,7 @@ in {
             model_overrides.custom = {
                 "Qwen3.8-27B".context_window = 240000;
                 "Qwen3.8-Flash-Next".context_window = 390000;
+                "Gemma4-E4B".context_window = 96000;
             };
 
             compression = {
