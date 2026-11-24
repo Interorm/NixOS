@@ -61,9 +61,16 @@
         # cu12 wheel names; the libraries come from cudaPackages instead.
         pythonRemoveDeps = old.pythonRemoveDeps ++ [
             "nvidia-cudnn-cu12" "nvidia-cusparselt-cu12" "nvidia-nccl-cu12" "nvidia-nvshmem-cu12"
+            "cuda-bindings"
         ];
-        # nixpkgs flags torch-bin as broken when cuda-bindings < 13 -- correct
-        # for its cu130 wheel, wrong for this cu126 one (which requires <13).
+        # cuda-bindings is optional for torch: every import in this wheel is a
+        # `try: from cuda.bindings import ... except ImportError` (CUDA-graph
+        # annotations, UVM, CUPTI profiler, sm_80+ CuTe-DSL kernels -- none used
+        # here).  Dropping it avoids building nixpkgs' cuda-bindings at 12.9.x,
+        # whose pyproject pins cython<3.3 against nixpkgs' 3.3.0.
+        dependencies = builtins.filter (d: (d.pname or "") != "cuda-bindings") old.dependencies;
+        # nixpkgs flags torch-bin as broken when cuda-bindings < 13 -- right for
+        # its cu130 wheel, moot here (cu126, and cuda-bindings is dropped).
         meta = old.meta // { problems = { }; };
     });
 
