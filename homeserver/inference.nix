@@ -2,9 +2,9 @@
     pkgs, config, lib,
     ...
 }: let
-    # Gated Hub repos (DINOv3, RMBG-2.0 for TRELLIS.2) need a token.  The secret
-    # switches on by committing secrets/hf-token.age -- until then evaluation
-    # still succeeds and only the gated downloads fail (401, retried every 60 s).
+    # Gated Hub repos need a token.  The secret switches on by committing
+    # secrets/hf-token.age -- until then evaluation still succeeds and only
+    # gated downloads fail (401, retried every 60 s).  (TRELLIS.2's GGUF repo is public.)
     hasHfToken = builtins.pathExists ../secrets/hf-token.age;
 in {
 
@@ -20,8 +20,9 @@ in {
     };
     services.huggingface-models.tokenFile = lib.mkIf hasHfToken config.age.secrets.hf-token.path;
 
-    # Image -> STL on the 1080 Ti.  `systemctl start trellis2` stops Gemma4-E4B,
-    # `systemctl stop trellis2` brings it back.
+    # Image -> 3D (trellis.cpp, Q8, geometry only) on the 1080 Ti.
+    # `systemctl start trellis2` stops Gemma4-E4B, `systemctl stop trellis2`
+    # brings it back.  Client: `trellis2-stl photo.png [out.stl]`.
     services.trellis2 = {
         enable = true;
         shareGpuWith = "Gemma4-E4B";

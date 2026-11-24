@@ -9,63 +9,43 @@
 
     loopback = [ "127.0.0.1" "::1" "localhost" ];
 
-    # The four Hub repos the shape pipeline loads, fetched by the
-    # huggingface-models units.  `include` keeps it to the shape stage:
-    # ~11 GB instead of ~25 GB for the full repos.
+    # GGUF conversion of microsoft/TRELLIS.2-4B for trellis.cpp (public repo, no
+    # HF token).  Q8 of the shape stage only: background removal (birefnet),
+    # image conditioning (dinov3), sparse-structure flow + decoder, the 512/1024
+    # shape flows and the shape decoder -- ~6.4 GB.  The tex_* files (texture
+    # stage, ~4.6 GB at Q8) are left out because the service runs --no-texture.
     weights = {
-        trellis2 = {
-            repo = "microsoft/TRELLIS.2-4B";
-            revision = "af44b45f2e35a493886929c6d786e563ec68364d";
-            include = [
-                "pipeline.json"
-                "ckpts/ss_flow_img_dit_1_3B_64_bf16.*"
-                "ckpts/slat_flow_img2shape_dit_1_3B_*"
-                "ckpts/shape_dec_next_dc_f16c32_fp16.*"
-            ];
-        };
-        image_large = {
-            repo = "microsoft/TRELLIS-image-large";       # sparse-structure decoder only
-            revision = "25e0d31ffbebe4b5a97464dd851910efc3002d96";
-            include = [ "ckpts/ss_dec_conv3d_16l8_fp16.*" ];
-        };
-        dinov3 = {
-            repo = "facebook/dinov3-vitl16-pretrain-lvd1689m";   # gated: needs HF token
-            revision = "ea8dc2863c51be0a264bab82070e3e8836b02d51";
-            include = [ "*.json" "model.safetensors" ];
-        };
-        rmbg = {
-            repo = "briaai/RMBG-2.0";                     # gated: needs HF token
-            revision = "6a88d6a65119856a743be87ec1e6bee6f08e1f93";
-            include = [ "*.py" "*.json" "model.safetensors" ];
-        };
+        repo = "ilintar/trellis2-gguf";
+        revision = "a57397bd3d351599d9729fc144b3f87c3f87d65b";
+        quant = "q8";
+        files = [
+            "birefnet" "dinov3" "ss_flow" "ss_dec"
+            "shape_flow_512" "shape_flow_1024" "shape_dec"
+        ];
     };
-    hfName = key: "trellis2-${key}";
-    hfUnits = map (key: "hf-model-${hfName key}.service") (lib.attrNames weights);
-
-    # 61 -> "6.1"
-    capability = let a = toString cfg.cuda_architecture;
-        in "${lib.substring 0 (lib.stringLength a - 1) a}.${lib.substring (lib.stringLength a - 1) 1 a}";
+    hfName = "trellis2";
+    hfUnit = "hf-model-${hfName}.service";
+    # trellis-server --models wants a flat directory of <stage>.gguf files.
+    modelsDir = "${hf.paths.${hfName}}/${weights.quant}";
 
     sharedUnit = "${cfg.shareGpuWith}.service";
 
-    configFile = pkgs.writeText "trellis2-stl.json" (builtins.toJSON {
-        inherit (cfg) host port;
-        output_dir = "/var/lib/trellis2/outputs";
-        default_resolution = cfg.defaultResolution;
-        max_num_tokens = cfg.maxNumTokens;
-        models = lib.mapAttrs (key: _: hf.paths.${hfName key}) weights;
-    });
+    checkWeights = pkgs.writeShellScript "trellis2-check-weights" ''
+        for f in ${lib.concatMapStringsSep " " (f: "${f}.gguf") weights.files}; do
+            [ -s "${modelsDir}/$f" ] || { echo "missing ${modelsDir}/$f (hf-model-${hfName} still downloading?)" >&2; exit 1; }
+        done
+    '';
 in {
     options.services.trellis2 = {
-        enable = lib.mkEnableOption "TRELLIS.2 image-to-STL web UI (started on demand, not at boot)";
+        enable = lib.mkEnableOption "TRELLIS.2 image-to-3D (trellis.cpp, Q8, geometry only; started on demand, not at boot)";
 
         package = lib.mkOption {
             type = lib.types.package;
             default = import ./package.nix {
                 inherit pkgs lib cudaPackages;
-                cudaCapability = capability;
+                cudaArchitecture = cfg.cuda_architecture;
             };
-            defaultText = lib.literalMD "TRELLIS.2 built from `./package.nix` for `cuda_architecture`";
+            defaultText = lib.literalMD "trellis.cpp built from `./package.nix` for `cuda_architecture`, plus the `trellis2-stl` client";
         };
 
         host = lib.mkOption { type = lib.types.str; default = "127.0.0.1"; };
@@ -94,19 +74,25 @@ in {
             type = lib.types.int;
             default = llama.cuda_architecture;
             defaultText = lib.literalExpression "config.services.llama-cpp.cuda_architecture";
-            description = "Compute capability the CUDA extensions are compiled for, e.g. 61.";
+            description = "Compute capability the CUDA kernels are compiled for, e.g. 61.";
         };
 
         defaultResolution = lib.mkOption {
-            type = lib.types.enum [ "512" "1024_cascade" ];
+            type = lib.types.enum [ "512" "1024" ];
             default = "512";
-            description = "Preselected resolution in the UI. 1024 is not known to fit in 11 GB.";
+            description = "Geometry resolution when a request does not set one (1024 = cascade). 1024 is not known to fit in 11 GB.";
+        };
+
+        maxFaces = lib.mkOption {
+            type = lib.types.ints.positive;
+            default = 300000;
+            description = "QEM decimation face target when a request does not set one (trellis.cpp minimum: 1000).";
         };
 
         maxNumTokens = lib.mkOption {
             type = lib.types.int;
             default = 49152;
-            description = "Token cap for the 1024 cascade; lower it if 1024 runs out of VRAM.";
+            description = "Token budget of the 1024 cascade; lower it if 1024 runs out of VRAM.";
         };
     };
 
@@ -123,41 +109,51 @@ in {
             }
         ];
 
-        services.huggingface-models.models = lib.mapAttrs' (key: w: lib.nameValuePair (hfName key) {
-            inherit (w) repo revision include;
-            target = hfName key;
-        }) weights;
+        services.huggingface-models.models.${hfName} = {
+            inherit (weights) repo revision;
+            include = map (f: "${weights.quant}/${f}.gguf") weights.files;
+            target = hfName;
+        };
+
+        environment.systemPackages = [ cfg.package ];     # trellis2-stl client
 
         systemd.services.trellis2 = {
-            description = "TRELLIS.2 image-to-STL"
+            description = "TRELLIS.2 image-to-3D (trellis.cpp)"
                 + lib.optionalString (cfg.shareGpuWith != null) " (borrows the GPU of ${cfg.shareGpuWith})";
             # No wantedBy: `systemctl start trellis2` when you want to print something.
             # Any ordering edge makes systemd finish stopping the conflicting
             # unit before this one starts (else both could hold VRAM briefly).
-            after = [ "network.target" ] ++ hfUnits
+            after = [ "network.target" hfUnit ]
                 ++ lib.optional (cfg.shareGpuWith != null) sharedUnit;
-            wants = hfUnits;
+            wants = [ hfUnit ];
             conflicts = lib.optional (cfg.shareGpuWith != null) sharedUnit;
-            # Deliberately no ConditionPathExists on the weights: a skipped start
-            # would still stop the shared instance via Conflicts= but never run
-            # ExecStopPost.  Missing weights make the process exit instead, and
-            # ExecStopPost hands the GPU back.
+            # No ConditionPathExists on the weights: a skipped start would still
+            # stop the shared instance via Conflicts= but never run ExecStopPost.
+            # The ExecStartPre check below fails the start instead, and
+            # ExecStopPost (which runs after a failed start too) hands the GPU back.
 
-            environment = {
-                ATTN_BACKEND = "sdpa";
-                PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True";
-                FLEX_GEMM_USE_AUTOTUNE_CACHE = "0";
-                FLEX_GEMM_AUTOSAVE_AUTOTUNE_CACHE = "0";
-                HF_HUB_OFFLINE = "1";
-                TRANSFORMERS_OFFLINE = "1";
-                HOME = "/var/lib/trellis2";
-            } // lib.optionalAttrs (cfg.device != null) {
+            environment = lib.optionalAttrs (cfg.device != null) {
                 CUDA_VISIBLE_DEVICES = toString cfg.device;
             };
 
             serviceConfig = {
                 Type = "simple";
-                ExecStart = "${lib.getExe cfg.package} ${configFile}";
+                ExecStartPre = checkWeights;
+                # CUDA_VISIBLE_DEVICES already narrows to one card, so ggml's device 0.
+                # --no-texture is the base default; a request may still send texture=on,
+                # which fails for lack of the tex_* weights rather than loading anything.
+                ExecStart = lib.escapeShellArgs [
+                    (lib.getExe cfg.package)
+                    "--models" modelsDir
+                    "--gpu" "0"
+                    "--host" cfg.host
+                    "--port" (toString cfg.port)
+                    "--res" cfg.defaultResolution
+                    "--faces" (toString cfg.maxFaces)
+                    "--max-tokens" (toString cfg.maxNumTokens)
+                    "--no-texture"
+                    "--require-gpu"
+                ];
                 # Hand the GPU back however TRELLIS.2 ended (stop, crash, OOM).
                 # `+` = as root; --no-block so a conflict-triggered stop does not
                 # wait on the very start that triggered it.
@@ -168,6 +164,7 @@ in {
 
                 DynamicUser = true;
                 StateDirectory = "trellis2";
+                WorkingDirectory = "/var/lib/trellis2";
                 PrivateTmp = true;
                 ProtectHome = true;
                 ProtectSystem = "strict";
