@@ -65,6 +65,7 @@
             hf download \
                 ${lib.escapeShellArg model.repo} \
                 ${lib.optionalString (model.file != null) (lib.escapeShellArg model.file)} \
+                ${lib.concatMapStringsSep " " (p: "--include ${lib.escapeShellArg p}") model.include} \
                 --revision ${lib.escapeShellArg model.revision} \
                 --local-dir ${lib.escapeShellArg staging}
 
@@ -128,6 +129,17 @@ in {
                         description = ''
                             Single file to fetch, as named *inside the repo*.
                             null fetches the whole repo into a directory.
+                        '';
+                    };
+
+                    include = lib.mkOption {
+                        type = lib.types.listOf lib.types.str;
+                        default = [];
+                        example = [ "*.json" "ckpts/model_a.*" ];
+                        description = ''
+                            Glob patterns passed to `hf download --include` when
+                            fetching a whole repo (file = null), so only the
+                            parts a service actually loads land on disk.
                         '';
                     };
 
