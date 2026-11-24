@@ -72,9 +72,16 @@
             runHook postInstall
         '';
 
-        # The build tree uses RPATH=$ORIGIN (executable next to its libs);
-        # installed, the libs live in ../lib.
-        postFixup = ''
+        # The files are copied by hand (the project has no install rules), so
+        # CMake never rewrote their build-tree RPATH: it still lists /build/...,
+        # which Nix rejects.  Drop those entries; the executable sits in bin/
+        # while the libs live in ../lib, so point it there.  Must run before
+        # fixup: the forbidden-reference check is part of it.
+        preFixup = ''
+            for f in $out/bin/trellis-server $out/lib/*.so*; do
+                [ -L "$f" ] && continue
+                patchelf --set-rpath "$(patchelf --print-rpath "$f" | tr ':' '\n' | grep -v '^/build/' | paste -sd:)" "$f"
+            done
             patchelf --add-rpath $out/lib $out/bin/trellis-server
         '';
 
