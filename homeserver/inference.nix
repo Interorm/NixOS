@@ -1,13 +1,32 @@
 {
     pkgs, config, lib,
     ...
-}: {
+}: let
+    # Gated Hub repos (DINOv3, RMBG-2.0 for TRELLIS.2) need a token.  The secret
+    # switches on by committing secrets/hf-token.age -- until then evaluation
+    # still succeeds and only the gated downloads fail (401, retried every 60 s).
+    hasHfToken = builtins.pathExists ../secrets/hf-token.age;
+in {
 
     imports = [ 
         ../services/inference/llama-cpp 
         ../services/inference/model-gateway
         ../services/inference/proxy 
+        ../services/inference/trellis2
     ];
+
+    age.secrets = lib.optionalAttrs hasHfToken {
+        hf-token.file = ../secrets/hf-token.age;      # EnvironmentFile: HF_TOKEN=hf_...
+    };
+    services.huggingface-models.tokenFile = lib.mkIf hasHfToken config.age.secrets.hf-token.path;
+
+    # Image -> STL on the 1080 Ti.  `systemctl start trellis2` stops Gemma4-E4B,
+    # `systemctl stop trellis2` brings it back.
+    services.trellis2 = {
+        enable = true;
+        shareGpuWith = "Gemma4-E4B";
+        host = "0.0.0.0";
+    };
 
     services.llama-cpp = {
         cuda = true;

@@ -1,0 +1,176 @@
+diff --git a/o-voxel/o_voxel/__init__.py b/o-voxel/o_voxel/__init__.py
+index 263b753..fb2a513 100644
+--- a/o-voxel/o_voxel/__init__.py
++++ b/o-voxel/o_voxel/__init__.py
+@@ -1,7 +1,14 @@
+ from . import (
+     convert,
+     io,
+-    postprocess,
+     rasterize,
+     serialize
+-)
+\ No newline at end of file
++)
++
++
++def __getattr__(name):
++    # postprocess pulls in nvdiffrast (texture baking only); import it on first use.
++    if name == 'postprocess':
++        import importlib
++        return importlib.import_module('.postprocess', __name__)
++    raise AttributeError(f"module {__name__} has no attribute {name}")
+\ No newline at end of file
+diff --git a/trellis2/models/__init__.py b/trellis2/models/__init__.py
+index d4fed03..2cbff35 100644
+--- a/trellis2/models/__init__.py
++++ b/trellis2/models/__init__.py
+@@ -63,7 +63,10 @@ def from_pretrained(path: str, **kwargs):
+     with open(config_file, 'r') as f:
+         config = json.load(f)
+     model = __getattr__(config['name'])(**config['args'], **kwargs)
+-    model.load_state_dict(load_file(model_file), strict=False)
++    missing, unexpected = model.load_state_dict(load_file(model_file), strict=False)
++    if missing or unexpected:
++        # strict=False would otherwise leave mismatched layers silently random.
++        print(f"[models] {path}: {len(missing)} missing / {len(unexpected)} unexpected keys: {missing[:5]} {unexpected[:5]}")
+ 
+     return model
+ 
+diff --git a/trellis2/modules/sparse/attention/full_attn.py b/trellis2/modules/sparse/attention/full_attn.py
+index 4eb74d2..cae4c78 100644
+--- a/trellis2/modules/sparse/attention/full_attn.py
++++ b/trellis2/modules/sparse/attention/full_attn.py
+@@ -211,6 +211,13 @@ def sparse_scaled_dot_product_attention(*args, **kwargs):
+             max_q_seqlen = max(q_seqlen)
+             max_kv_seqlen = max(kv_seqlen)
+         out = flash_attn_3.flash_attn_varlen_func(q, k, v, cu_seqlens_q, cu_seqlens_kv, max_q_seqlen, max_kv_seqlen)
++    elif config.ATTN == 'sdpa':
++        from .sdpa_varlen import sdpa_varlen
++        if num_all_args == 1:
++            q, k, v = qkv.unbind(dim=1)
++        elif num_all_args == 2:
++            k, v = kv.unbind(dim=1)
++        out = sdpa_varlen(q, k, v, q_seqlen, kv_seqlen)
+     else:
+         raise ValueError(f"Unknown attention module: {config.ATTN}")
+     
+diff --git a/trellis2/modules/sparse/attention/sdpa_varlen.py b/trellis2/modules/sparse/attention/sdpa_varlen.py
+new file mode 100644
+index 0000000..7398384
+--- /dev/null
++++ b/trellis2/modules/sparse/attention/sdpa_varlen.py
+@@ -0,0 +1,57 @@
++"""
++Variable-length attention on top of torch.nn.functional.scaled_dot_product_attention.
++
++Stand-in for the xformers / flash-attn varlen kernels on GPUs that have neither
++(e.g. Pascal, sm_61).  PyTorch's memory-efficient SDPA kernel runs on sm_50+.
++
++Inputs are packed token tensors as used by the sparse attention modules:
++    q: [T_q, H, C]   k: [T_kv, H, C]   v: [T_kv, H, C_v]
++with per-sequence lengths q_seqlen / kv_seqlen (lists or 1-D tensors).
++"""
++from typing import *
++import torch
++import torch.nn.functional as F
++
++__all__ = ['sdpa_varlen']
++
++
++def _as_list(lens) -> List[int]:
++    if isinstance(lens, torch.Tensor):
++        return [int(x) for x in lens.tolist()]
++    return [int(x) for x in lens]
++
++
++def _pad(x: torch.Tensor, lens: List[int]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
++    """Packed [T, H, C] -> padded [B, L, H, C] plus the (batch, position) index of every token."""
++    B, L = len(lens), max(lens)
++    lens_t = torch.tensor(lens, device=x.device)
++    batch_idx = torch.repeat_interleave(torch.arange(B, device=x.device), lens_t)
++    starts = torch.cumsum(lens_t, 0) - lens_t
++    pos_idx = torch.arange(x.shape[0], device=x.device) - starts[batch_idx]
++    out = x.new_zeros((B, L, *x.shape[1:]))
++    out[batch_idx, pos_idx] = x
++    return out, batch_idx, pos_idx
++
++
++def sdpa_varlen(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, q_seqlen, kv_seqlen) -> torch.Tensor:
++    q_seqlen, kv_seqlen = _as_list(q_seqlen), _as_list(kv_seqlen)
++    assert len(q_seqlen) == len(kv_seqlen), "q and kv must have the same number of sequences"
++
++    if len(q_seqlen) == 1:
++        # Single sequence: plain dense attention, no mask -> memory-efficient kernel.
++        out = F.scaled_dot_product_attention(
++            q.unsqueeze(0).transpose(1, 2), k.unsqueeze(0).transpose(1, 2), v.unsqueeze(0).transpose(1, 2)
++        )
++        return out.transpose(1, 2)[0]
++
++    qp, qb, qi = _pad(q, q_seqlen)
++    kp, _, _ = _pad(k, kv_seqlen)
++    vp, _, _ = _pad(v, kv_seqlen)
++    kv_len = torch.tensor(kv_seqlen, device=q.device)
++    # [B, 1, 1, L_kv]: True = attend.  Padded *query* rows still see their real keys,
++    # so no row is fully masked (which would produce NaNs); they are dropped below.
++    mask = (torch.arange(kp.shape[1], device=q.device)[None, :] < kv_len[:, None])[:, None, None, :]
++    out = F.scaled_dot_product_attention(
++        qp.transpose(1, 2), kp.transpose(1, 2), vp.transpose(1, 2), attn_mask=mask
++    ).transpose(1, 2)                                   # [B, L_q, H, C_v]
++    return out[qb, qi]
+diff --git a/trellis2/modules/sparse/attention/windowed_attn.py b/trellis2/modules/sparse/attention/windowed_attn.py
+index 0430788..b2765b4 100644
+--- a/trellis2/modules/sparse/attention/windowed_attn.py
++++ b/trellis2/modules/sparse/attention/windowed_attn.py
+@@ -60,6 +60,8 @@ def calc_window_partition(
+             'cu_seqlens': torch.cat([torch.tensor([0], device=tensor.device), torch.cumsum(seq_lens, dim=0)], dim=0).int(),
+             'max_seqlen': torch.max(seq_lens)
+         }
++    elif config.ATTN == 'sdpa':
++        attn_func_args = {'seq_lens': seq_lens}
+ 
+     return fwd_indices, bwd_indices, seq_lens, attn_func_args
+     
+@@ -113,6 +115,10 @@ def sparse_windowed_scaled_dot_product_self_attention(
+         if 'flash_attn' not in globals():
+             import flash_attn
+         out = flash_attn.flash_attn_varlen_qkvpacked_func(qkv_feats, **attn_func_args)  # [M, H, C]
++    elif config.ATTN == 'sdpa':
++        from .sdpa_varlen import sdpa_varlen
++        q, k, v = qkv_feats.unbind(dim=1)                                               # [M, H, C]
++        out = sdpa_varlen(q, k, v, seq_lens, seq_lens)                                  # [M, H, C]
+ 
+     out = out[bwd_indices]      # [T, H, C]
+ 
+@@ -184,6 +190,10 @@ def sparse_windowed_scaled_dot_product_cross_attention(
+             cu_seqlens_q=q_attn_func_args['cu_seqlens'], cu_seqlens_k=kv_attn_func_args['cu_seqlens'],
+             max_seqlen_q=q_attn_func_args['max_seqlen'], max_seqlen_k=kv_attn_func_args['max_seqlen'],
+         )  # [M, H, C]
++    elif config.ATTN == 'sdpa':
++        from .sdpa_varlen import sdpa_varlen
++        k, v = kv_feats.unbind(dim=1)                                                   # [M, H, C]
++        out = sdpa_varlen(q_feats, k, v, q_seq_lens, kv_seq_lens)                       # [M, H, C]
+ 
+     out = out[q_bwd_indices]      # [T, H, C]
+ 
+diff --git a/trellis2/modules/sparse/config.py b/trellis2/modules/sparse/config.py
+index a5f4d53..b2bc9c2 100644
+--- a/trellis2/modules/sparse/config.py
++++ b/trellis2/modules/sparse/config.py
+@@ -21,7 +21,7 @@ def __from_env():
+         CONV = env_sparse_conv_backend
+     if env_sparse_debug is not None:
+         DEBUG = env_sparse_debug == '1'
+-    if env_sparse_attn_backend is not None and env_sparse_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3']:
++    if env_sparse_attn_backend is not None and env_sparse_attn_backend in ['xformers', 'flash_attn', 'flash_attn_3', 'sdpa']:
+         ATTN = env_sparse_attn_backend
+         
+     print(f"[SPARSE] Conv backend: {CONV}; Attention backend: {ATTN}")
+@@ -38,6 +38,6 @@ def set_debug(debug: bool):
+     global DEBUG
+     DEBUG = debug
+ 
+-def set_attn_backend(backend: Literal['xformers', 'flash_attn']):
++def set_attn_backend(backend: Literal['xformers', 'flash_attn', 'sdpa']):
+     global ATTN
+     ATTN = backend

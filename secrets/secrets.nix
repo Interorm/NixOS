@@ -32,6 +32,7 @@ let
     "tailscale.age".publicKeys = [ admin homeserver workstation ];
     "restic-homeserver.age".publicKeys = [ admin homeserver ];
     "google-client.age".publicKeys = [ admin homeserver ];
+    "hf-token.age".publicKeys = [ admin homeserver ];
   };
 in
 hermesSecrets // machineSecrets
