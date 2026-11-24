@@ -151,7 +151,11 @@
             FORCE_CUDA = "1";
         };
         preBuild = ''
-            export MAX_JOBS="$NIX_BUILD_CORES"
+            # NOT $NIX_BUILD_CORES: with cores = 0 that is all 8 CPUs, and Nix
+            # builds cumesh/flex_gemm/o_voxel side by side (max-jobs = 8), so
+            # 3 x 8 nvcc/cicc processes at 1-3 GB each exhausted the 31 GB box
+            # (llama-server etc. already hold ~11 GB).  2 each = at most 6.
+            export MAX_JOBS=2
         '';
     } // attrs);
 
