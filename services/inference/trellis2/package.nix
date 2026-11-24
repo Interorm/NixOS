@@ -47,8 +47,16 @@
     py = pkgs.python3Packages;
     python = py.python;
     pyTag = "cp" + builtins.replaceStrings [ "." ] [ "" ] python.pythonVersion;
-    wheelUrl = name: v:
-        "https://download.pytorch.org/whl/cu126/${name}-${v.version}%2Bcu126-${pyTag}-${pyTag}-manylinux_2_28_x86_64.whl";
+    # The store name must keep the "+cu126" local version: fetchurl would derive
+    # it from the URL and mangle "%2B" into "-2B", after which the wheel's
+    # filename no longer parses to version 2.13.0+cu126 and the installer looks
+    # for a torch-2.13.0.dist-info that does not exist.  (nixpkgs' own
+    # binary-hashes.nix sets `name` for the same reason.)
+    fetchWheel = pname: v: pkgs.fetchurl {
+        name = "${pname}-${v.version}+cu126-${pyTag}-${pyTag}-manylinux_2_28_x86_64.whl";
+        url = "https://download.pytorch.org/whl/cu126/${pname}-${v.version}%2Bcu126-${pyTag}-${pyTag}-manylinux_2_28_x86_64.whl";
+        inherit (v) hash;
+    };
 
     # Targeted overrides rather than python.override { packageOverrides }: a
     # set-wide torch swap also invalidates every package that merely *tests*
@@ -86,7 +94,7 @@
 
     torch = (py.torch-bin.override { inherit cudaPackages; }).overridePythonAttrs (old: {
         inherit (wheels.torch) version;
-        src = pkgs.fetchurl { url = wheelUrl "torch" wheels.torch; inherit (wheels.torch) hash; };
+        src = fetchWheel "torch" wheels.torch;
         # cu12 wheel names; the libraries come from cudaPackages instead.
         pythonRemoveDeps = old.pythonRemoveDeps ++ [
             "nvidia-cudnn-cu12" "nvidia-cusparselt-cu12" "nvidia-nccl-cu12" "nvidia-nvshmem-cu12"
@@ -110,7 +118,7 @@
         torch-bin = torch;
     }).overridePythonAttrs (old: {
         inherit (wheels.torchvision) version;
-        src = pkgs.fetchurl { url = wheelUrl "torchvision" wheels.torchvision; inherit (wheels.torchvision) hash; };
+        src = fetchWheel "torchvision" wheels.torchvision;
     });
 
     # RMBG-2.0 (BiRefNet) remote code needs these.  Their test suites would run
@@ -239,5 +247,5 @@ in
             export TRELLIS2_STATIC=${static}
             exec ${env}/bin/python ${./server.py} "$@"
         '';
-        derivationArgs.passthru = { inherit env static torch nccl nvshmem trellis2 cumesh flex-gemm o-voxel trellisSrc; };
+        derivationArgs.passthru = { inherit env static torch torchvision timm kornia nccl nvshmem trellis2 cumesh flex-gemm o-voxel trellisSrc; };
     }
