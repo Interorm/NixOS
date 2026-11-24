@@ -55,6 +55,35 @@
     # against torch (safetensors, transformers, gradio + its npm frontend, ...)
     # and turns cache hits into local builds.  Only timm and kornia need torch
     # at runtime; everything else in the env comes straight from the cache.
+    # NCCL and NVSHMEM straight from the pip wheels this torch wheel was built
+    # against (Requires-Dist pins).  nixpkgs builds both from source: NCCL with
+    # device kernels for every default capability (7.5-12.1, none of them the
+    # card this runs on; hours of nvcc), NVSHMEM with an openmpi/ucx/pmix chain.
+    # torch only needs the two host libraries below at load time; both link
+    # nothing beyond libc/libstdc++.  Single-GPU inference never calls either.
+    pipLib = { pname, version, url, hash, lib }: pkgs.stdenv.mkDerivation {
+        inherit pname version;
+        src = pkgs.fetchurl { inherit url hash; };
+        nativeBuildInputs = [ pkgs.unzip pkgs.autoPatchelfHook ];
+        buildInputs = [ pkgs.stdenv.cc.cc.lib ];
+        unpackPhase = "unzip -q $src ${lib}";
+        installPhase = "install -Dm755 ${lib} -t $out/lib";
+    };
+    nccl = pipLib {
+        pname = "nccl-cu12-bin";
+        version = "2.29.3";
+        url = "https://files.pythonhosted.org/packages/31/5a/cac7d231f322b66caa16fd4b136ebc8e4b18b2805811c2d58dc47210cdea/nvidia_nccl_cu12-2.29.3-py3-none-manylinux_2_18_x86_64.whl";
+        hash = "sha256-Na1C59XXIqg8NqOkeOKBwgpWRjg96vG57Rqat9Yb7VM=";
+        lib = "nvidia/nccl/lib/libnccl.so.2";
+    };
+    nvshmem = pipLib {
+        pname = "nvshmem-cu12-bin";
+        version = "3.4.5";
+        url = "https://files.pythonhosted.org/packages/b5/09/6ea3ea725f82e1e76684f0708bbedd871fc96da89945adeba65c3835a64c/nvidia_nvshmem_cu12-3.4.5-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+        hash = "sha256-BC8lAPJMAh24oGxe7CU5An1XRg4cGnYgVaZVT3LDab0=";
+        lib = "nvidia/nvshmem/lib/libnvshmem_host.so.3";
+    };
+
     torch = (py.torch-bin.override { inherit cudaPackages; }).overridePythonAttrs (old: {
         inherit (wheels.torch) version;
         src = pkgs.fetchurl { url = wheelUrl "torch" wheels.torch; inherit (wheels.torch) hash; };
@@ -72,6 +101,8 @@
         # nixpkgs flags torch-bin as broken when cuda-bindings < 13 -- right for
         # its cu130 wheel, moot here (cu126, and cuda-bindings is dropped).
         meta = old.meta // { problems = { }; };
+        buildInputs = builtins.filter (d: d != cudaPackages.nccl && d != cudaPackages.libnvshmem) old.buildInputs
+            ++ [ nccl nvshmem ];
     });
 
     torchvision = (py.torchvision-bin.override {
@@ -208,5 +239,5 @@ in
             export TRELLIS2_STATIC=${static}
             exec ${env}/bin/python ${./server.py} "$@"
         '';
-        derivationArgs.passthru = { inherit env static torch trellis2 cumesh flex-gemm o-voxel trellisSrc; };
+        derivationArgs.passthru = { inherit env static torch nccl nvshmem trellis2 cumesh flex-gemm o-voxel trellisSrc; };
     }
