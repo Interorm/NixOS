@@ -20,15 +20,6 @@ in {
     };
     services.huggingface-models.tokenFile = lib.mkIf hasHfToken config.age.secrets.hf-token.path;
 
-    # Image -> 3D (trellis.cpp, Q8, geometry only) on the 1080 Ti.
-    # `systemctl start trellis2` stops Gemma4-E4B, `systemctl stop trellis2`
-    # brings it back.  Client: `trellis2-stl photo.png [out.stl]`.
-    services.trellis2 = {
-        enable = true;
-        shareGpuWith = "Gemma4-E4B";
-        host = "0.0.0.0";
-    };
-
     services.llama-cpp = {
         cuda = true;
         cuda_architecture = 61;
